@@ -6,6 +6,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'record_map_screen.dart';
 import '../services/health_service.dart';
+import '../services/api_service.dart';
+import '../services/achievement_service.dart';
 
 class RecordScreen extends StatefulWidget {
   static const routeName = '/RecordScreen';
@@ -72,6 +74,7 @@ class _RecordScreenState extends State<RecordScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat(reverse: true);
+    _loadRecentActivities();
   }
 
   @override
@@ -150,21 +153,28 @@ class _RecordScreenState extends State<RecordScreen>
 
   void _onStopPressed() {
     HapticFeedback.heavyImpact();
-    // Save log only if there was meaningful activity (at least 3 seconds)
-    if (_isRecording && _elapsedSeconds >= 3) {
+    // Save only if there was meaningful activity (at least 3 seconds).
+    final shouldSave = _isRecording && _elapsedSeconds >= 3;
+    final durationSeconds = _elapsedSeconds;
+    final distanceKm = _isGpsActivity ? _activeDistance : 0.0;
+    final calories = _activeCalories;
+    final heartRate = _activeHeartRate;
+
+    if (shouldSave) {
       _activityLogs.insert(
         0,
         _ActivityLog(
           activityName: _selectedActivityName,
           activityIcon: _selectedActivityIcon,
-          duration: _elapsedSeconds,
-          distanceKm: _isGpsActivity ? _activeDistance : 0.0,
-          calories: _activeCalories,
-          avgHeartRate: _activeHeartRate,
+          duration: durationSeconds,
+          distanceKm: distanceKm,
+          calories: calories,
+          avgHeartRate: heartRate,
           timestamp: DateTime.now(),
         ),
       );
     }
+
     _stopTimer();
     setState(() {
       _isRecording = false;
@@ -173,6 +183,63 @@ class _RecordScreenState extends State<RecordScreen>
       _activeDistance = 0.0;
       _activeCalories = 0;
       _activeHeartRate = 0;
+    });
+
+    if (shouldSave) {
+      _persistActivity(
+        durationSeconds: durationSeconds,
+        distanceKm: distanceKm,
+        calories: calories,
+      );
+    }
+  }
+
+  /// Writes the finished workout to the backend so it counts toward analytics,
+  /// goals, leaderboards, and achievements.
+  Future<void> _persistActivity({
+    required int durationSeconds,
+    required double distanceKm,
+    required int calories,
+  }) async {
+    final distanceMeters = distanceKm * 1000;
+    try {
+      await ApiService.logActivity({
+        'title': _selectedActivityName,
+        'type': _selectedActivityName,
+        'duration': durationSeconds,
+        'distance': distanceMeters,
+        'calories': calories,
+        if (distanceKm > 0)
+          'avgPace': (durationSeconds / 60) / distanceKm,
+      });
+      // Refresh so newly earned badges appear right away.
+      AchievementService().sync();
+      if (!mounted) return;
+      _loadRecentActivities();
+    } catch (e) {
+      debugPrint('Save activity error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Workout saved locally but could not sync. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadRecentActivities() async {
+    final activities = await ApiService.getActivities(limit: 30);
+    if (!mounted) return;
+    setState(() {
+      _activityLogs
+        ..clear()
+        ..addAll(activities.map(_ActivityLog.fromApi));
     });
   }
 
@@ -1144,4 +1211,28 @@ class _ActivityLog {
     required this.avgHeartRate,
     required this.timestamp,
   });
+
+  /// Builds a log row from a saved activity returned by the API.
+  factory _ActivityLog.fromApi(Map<String, dynamic> a) {
+    final type = '${a['type'] ?? 'Workout'}';
+    return _ActivityLog(
+      activityName: '${a['title'] ?? type}',
+      activityIcon: switch (type.toLowerCase()) {
+        'run' || 'running' || 'trail running' => Icons.directions_run_rounded,
+        'ride' || 'cycling' => Icons.pedal_bike_rounded,
+        'walk' || 'walking' => Icons.directions_walk_rounded,
+        'hike' || 'hiking' => Icons.hiking_rounded,
+        'swim' || 'swimming' => Icons.pool_rounded,
+        'rowing' => Icons.rowing_rounded,
+        _ => Icons.fitness_center_rounded,
+      },
+      duration: ((a['duration'] as num?) ?? 0).toInt(),
+      distanceKm: ((a['distance'] as num?) ?? 0) / 1000,
+      calories: ((a['calories'] as num?) ?? 0).toInt(),
+      avgHeartRate: 0,
+      timestamp:
+          DateTime.tryParse('${a['createdAt'] ?? ''}')?.toLocal() ??
+              DateTime.now(),
+    );
+  }
 }

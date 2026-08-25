@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
-import '../services/trybe_service.dart';
+import '../services/api_service.dart';
+import '../widgets/user_avatar.dart';
 
 class CreateTrybeScreen extends StatefulWidget {
   static const routeName = '/CreateTrybeScreen';
@@ -72,40 +73,24 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
     {'name': 'Frisbee', 'icon': Icons.sports_handball_rounded},
   ];
 
-  // Suggested Members to invite
-  final List<Map<String, String>> _suggestedMembers = [
-    {
-      'id': '1',
-      'name': 'Marcus Vane',
-      'sub': 'Patna, Bihar • Runner',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuBgjRSNIhjmFhRP_8S3tuvi1UgLC68VGmAkh42cOH9VQliTiy7tCc6SthMMHXDQA4u5KVBjJbgUpMGDWngdIa0napfGh8KuaI2R7Vg5APFj_FuEPtSycFIZ0S48-A0mTSDF9pEM1B68-1eG3zJonxwSmwvmtIGw9-09xvJbXE20Bc3pv4KvyqQJNn1emw8tMbAY9KUjxJD_Lmjaw4Duenm3KPou27843mgzy-OF2cdC5p_ej4RvuGJAVUmHusIFbL2nb5sunZYAAqE',
-    },
-    {
-      'id': '2',
-      'name': 'Elena Forge',
-      'sub': 'Mumbai, India • Powerlifter',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDCQQabYLTohBmurAKr1RUN2IAmRiPuGsqFmInWzHEf__Aq8Lrup0DEecMWshiQqtOB1HAs-8fkX6PyMCEda_L3qGqU0Hd3pZ6C2Y99UPYmQjEvRzMX1Ola5UWClM-T51g-lXpPghN0dwlp7dEba8xTJJu76POnA9jCcIucHyiHs382ck93N92xzFSCg5Ed3_FxMZ4LfiX1hUbWrKGISFRwSRvCzC5BrI0mY3Ul_Hg9WbhgXrTKTFZULhLCg3sEkwFHYGol8j0dPoc',
-    },
-    {
-      'id': '3',
-      'name': 'Sarah Jenkins',
-      'sub': 'Patna, Bihar • Cyclist',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDZEtQZ2pORiFgwS8V2nQO0E69YkI0Oqooc8KhFjmnTDLcYvyoMxeLVRixFQd9a_BBq9BG9nvLci8oAL92pScug74S9dIcF6fIRW_uznf2ED1ss6gtmVCpajslV1W_mEgVJh1D8_eaA_XdbpOEMbhFcQCVGihiYEC7dPpHMOjGWwHCmHkoW-cWIo84ku68eXpJYrAqDMoAjPaFHk6bpwduHgxoRYNvB-mMS4bFDxEbb2Qkf7hSAlA5mWF6P3WQVed2wLfpN7uSNFAg',
-    },
-    {
-      'id': '4',
-      'name': 'David Kim',
-      'sub': 'Bengaluru, India • Triathlete',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDKbEFetka61Uzn8RD44STxX3QwAz_xcaaMZ-qzvnunUmBoges-xYFwWQTFpXij18kynNXL1kCjJ7eHZrLBexMEquhDjbpT30ThWjuWEdlZaW_ByrqJdvwg18EsATBXBVms3RCoQVOkpH9PeZiVTAQVE1iGclOOB2OwI8EIuMCCTrdCrl7qcAnsjMphuMjE9MqHlVIp1wCbJOr1ql0Bsee3LkdKqgpT6d9PbFZUGm8ojitxqhE6k0tOEM1_5PnJwz9-xYmUS1H2faU',
-    },
-  ];
+  // Athletes suggested for invitation, loaded from the API.
+  List<Map<String, dynamic>> _suggestedMembers = [];
+  bool _isCreating = false;
 
   final Set<String> _invitedMemberIds = {};
   String _memberSearchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSuggestedMembers();
+  }
+
+  Future<void> _loadSuggestedMembers() async {
+    final users = await ApiService.searchUsers('', limit: 20);
+    if (!mounted) return;
+    setState(() => _suggestedMembers = users);
+  }
 
   @override
   void dispose() {
@@ -133,7 +118,7 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
     }
   }
 
-  void _createTrybe() {
+  Future<void> _createTrybe() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       HapticFeedback.vibrate();
@@ -149,28 +134,58 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
       return;
     }
 
+    if (_isCreating) return;
     HapticFeedback.mediumImpact();
+    setState(() => _isCreating = true);
 
-    // Call Backend API
-    TrybeService().createTrybe(
-      name: name,
-      description: _descController.text.trim().isNotEmpty ? _descController.text.trim() : null,
-      category: _selectedActivities.isNotEmpty ? _selectedActivities.first : 'Running',
-      isPublic: _trybeType == 'Public',
-      imageFile: _trybeImageFile,
-    );
+    try {
+      final trybe = await ApiService.createTrybe(
+        name: name,
+        description: _descController.text.trim().isNotEmpty
+            ? _descController.text.trim()
+            : null,
+        category:
+            _selectedActivities.isNotEmpty ? _selectedActivities.first : null,
+        isPublic: _trybeType == 'Public',
+        activityInterests: _selectedActivities.toList(),
+        image: _trybeImageFile,
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: _accent,
-        content: Text(
-          'Trybe "$name" created successfully! 🎉',
-          style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold),
+      // Notify everyone the creator picked.
+      final trybeId = trybe?['id'] as String?;
+      if (trybeId != null) {
+        for (final userId in _invitedMemberIds) {
+          await ApiService.inviteToTrybe(trybeId, userId);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _isCreating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _accent,
+          content: Text(
+            'Trybe "$name" created successfully! 🎉',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
         ),
-      ),
-    );
-
-    Navigator.pop(context);
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isCreating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not create this Trybe. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -196,15 +211,22 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
             child: TextButton(
-              onPressed: _createTrybe,
-              child: Text(
-                'Create',
-                style: GoogleFonts.hankenGrotesk(
-                  color: _accent,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
+              onPressed: _isCreating ? null : _createTrybe,
+              child: _isCreating
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: _accent),
+                    )
+                  : Text(
+                      'Create',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: _accent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -489,11 +511,23 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
             const SizedBox(height: 12),
 
             // Suggested list
+            if (_suggestedMembers.isEmpty)
+              Text(
+                'No other athletes on Fitrybe yet — you can invite people once they join.',
+                style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white38, fontSize: 12.5),
+              ),
             ..._suggestedMembers.where((m) {
               if (_memberSearchQuery.isEmpty) return true;
-              return m['name']!.toLowerCase().contains(_memberSearchQuery);
+              final name =
+                  '${m['firstName'] ?? ''} ${m['lastName'] ?? ''}'.toLowerCase();
+              return name.contains(_memberSearchQuery);
             }).map((m) {
-              final isInvited = _invitedMemberIds.contains(m['id']);
+              final memberId = m['id'] as String?;
+              final rawName =
+                  '${m['firstName'] ?? ''} ${m['lastName'] ?? ''}'.trim();
+              final memberName = rawName.isEmpty ? 'Fitrybe Athlete' : rawName;
+              final isInvited = _invitedMemberIds.contains(memberId);
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -504,9 +538,10 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                 ),
                 child: Row(
                   children: [
-                    CircleAvatar(
+                    UserAvatar(
+                      url: ApiService.media(m['avatarUrl'] as String?),
+                      fallbackName: memberName,
                       radius: 18,
-                      backgroundImage: NetworkImage(m['avatar']!),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -514,7 +549,7 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            m['name']!,
+                            memberName,
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -522,7 +557,7 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                             ),
                           ),
                           Text(
-                            m['sub']!,
+                            '${m['location'] ?? 'Fitrybe community'}',
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white38,
                               fontSize: 11,
@@ -532,16 +567,18 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                       ),
                     ),
                     ElevatedButton(
-                      onPressed: () {
-                        HapticFeedback.lightImpact();
-                        setState(() {
-                          if (isInvited) {
-                            _invitedMemberIds.remove(m['id']);
-                          } else {
-                            _invitedMemberIds.add(m['id']!);
-                          }
-                        });
-                      },
+                      onPressed: memberId == null
+                          ? null
+                          : () {
+                              HapticFeedback.lightImpact();
+                              setState(() {
+                                if (isInvited) {
+                                  _invitedMemberIds.remove(memberId);
+                                } else {
+                                  _invitedMemberIds.add(memberId);
+                                }
+                              });
+                            },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: isInvited ? Colors.white10 : _accent,
                         elevation: 0,

@@ -17,14 +17,56 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   final Color _bg = Colors.black;
 
   int _selectedPlanIndex = 0; // 0: Yearly (Best Value), 1: Monthly
+  bool _isSubscribing = false;
+  bool _isPro = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    final status = await ApiService.getSubscriptionStatus();
+    if (!mounted) return;
+    setState(() => _isPro = status['isPro'] == true);
+  }
 
   Future<void> _onSubscribePressed() async {
+    if (_isSubscribing) return;
     HapticFeedback.heavyImpact();
     final plan = _selectedPlanIndex == 0 ? 'ANNUAL' : 'MONTHLY';
+    setState(() => _isSubscribing = true);
+
     try {
       await ApiService.subscribe(plan);
-    } catch (_) {}
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSubscribing = false);
+      // Never claim the upgrade worked when the server rejected it.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not start your subscription. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
+
     if (!mounted) return;
+    setState(() {
+      _isSubscribing = false;
+      _isPro = true;
+    });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -308,24 +350,39 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                         width: double.infinity,
                         height: 56,
                         child: ElevatedButton(
-                          onPressed: _onSubscribePressed,
+                          onPressed:
+                              (_isSubscribing || _isPro) ? null : _onSubscribePressed,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _accent,
                             foregroundColor: Colors.white,
+                            disabledBackgroundColor:
+                                _accent.withValues(alpha: 0.4),
+                            disabledForegroundColor: Colors.white70,
                             elevation: 8,
                             shadowColor: _accent.withValues(alpha: 0.5),
                             shape: const StadiumBorder(),
                           ),
-                          child: Text(
-                            _selectedPlanIndex == 0
-                                ? 'START 7-DAY FREE TRIAL'
-                                : 'SUBSCRIBE NOW',
-                            style: GoogleFonts.hankenGrotesk(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
-                            ),
-                          ),
+                          child: _isSubscribing
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  _isPro
+                                      ? "YOU'RE ON TRYBE PRO"
+                                      : _selectedPlanIndex == 0
+                                          ? 'START 7-DAY FREE TRIAL'
+                                          : 'SUBSCRIBE NOW',
+                                  style: GoogleFonts.hankenGrotesk(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.6,
+                                  ),
+                                ),
                         ),
                       ),
                       const SizedBox(height: 10),

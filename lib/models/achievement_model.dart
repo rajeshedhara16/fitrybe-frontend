@@ -104,6 +104,36 @@ class AchievementBadge {
     if (tgt <= 0) return 0;
     return (cur / tgt * 100).clamp(0, 100).toInt();
   }
+
+  /// Used to overlay the athlete's real progress and server unlock date onto
+  /// the static badge catalogue.
+  AchievementBadge copyWith({
+    double? cur,
+    String? date,
+    bool clearDate = false,
+    double? pctOverride,
+    bool clearPctOverride = false,
+  }) {
+    return AchievementBadge(
+      id: id,
+      cat: cat,
+      name: name,
+      hue: hue,
+      rarity: rarity,
+      d: d,
+      req: req,
+      cur: cur ?? this.cur,
+      tgt: tgt,
+      unit: unit,
+      date: clearDate ? null : (date ?? this.date),
+      shape: shape,
+      curTxt: curTxt,
+      tgtTxt: tgtTxt,
+      pctOverride: clearPctOverride ? null : (pctOverride ?? this.pctOverride),
+      remTxt: remTxt,
+      icon: icon,
+    );
+  }
 }
 
 class AchievementCategory {

@@ -1,13 +1,16 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'edit_profile_screen.dart';
 import 'achievements_screen.dart';
-import '../models/post_store.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../widgets/state_views.dart';
+import '../widgets/user_avatar.dart';
 import '../models/achievement_model.dart';
 import '../widgets/achievement_badge_widget.dart';
 import '../services/health_service.dart';
+import '../services/achievement_service.dart';
 import 'package:share_plus/share_plus.dart';
 
 class ProfileTab extends StatefulWidget {
@@ -21,17 +24,19 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   final Color _accent = const Color(0xFFFF5722);
   final Color _cardBg = const Color(0xFF1F1F22);
 
-  // Profile URLs matching user request
-  final String _bannerUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuB6TPeMuX0LW4ItpQWypk7_L5uUJEXStbcwTo0u6Qh2iiaJAnM_gvOKAwZHOjmQQrYYN3ryuR96W3O6yy0NClyBiDzgbW7GehFko-vrnjWLAvO_VeKAi-ixSqLJazJ2rsV7TnPyPq6GNsIRv0J7rXJg24hBRNgAAH5omJcCclVTJ1X7ODm1ZXjf8EqafkBDPwWz6P9rP61AW5nEe8yUMyOy6GEu8aN2Uh6B2l_2fK3GsYKCN4Mhu1rf';
-  final String _avatarUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuAHT0fSiT-tBM9-LHbHVlF65CZIgyCqn-DoDUSl05Y0gcWZ5GDqFvUrdutx26mNY5DtnE0ZpijRovfDxUuDLTu5hStbuDoEqMg95eZOlGU7rLLNjJ0EvPXvLs18QfqyMuOb-lgEkqg4Ybw2FlQVeIXwhwd8mUkP3SpCWEUMQnuUuHL2ac9TI_c2sG5wyicbvZ1rz7TuvQ74aVOFymH_WjY3EuexlU6cz0GhX0Kb_z1JbXHSiQhULIuH';
-
   // Post Likes state
   final Set<String> _likedProfilePostIds = {};
   final Map<String, int> _profilePostLikesCount = {};
 
   late AnimationController _streakController;
+
+  Map<String, dynamic> _stats = const {};
+  Map<String, dynamic> _analytics = const {};
+  List<Map<String, dynamic>> _myPosts = [];
+  bool _isLoading = true;
+
+  String? get _bannerUrl => SessionService().bannerUrl;
+  String? get _avatarUrl => SessionService().avatarUrl;
 
   @override
   void initState() {
@@ -43,6 +48,60 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     );
     // Trigger progress circle animation on load
     _streakController.forward();
+    _load();
+    AchievementService().sync();
+  }
+
+  Future<void> _load() async {
+    final userId = SessionService().userId;
+    if (userId == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    final results = await Future.wait([
+      ApiService.getUserProfile(userId),
+      ApiService.getAnalytics(),
+      ApiService.getFeed(authorId: userId, limit: 30),
+    ]);
+
+    if (!mounted) return;
+    final profile = results[0] as Map<String, dynamic>;
+    setState(() {
+      SessionService().update(profile['user'] as Map<String, dynamic>?);
+      _stats = (profile['stats'] as Map?)?.cast<String, dynamic>() ?? const {};
+      _analytics = results[1] as Map<String, dynamic>;
+      _myPosts = results[2] as List<Map<String, dynamic>>;
+      _isLoading = false;
+    });
+  }
+
+  /// Formats large follower counts as "1.2k".
+  static String _compact(num? value) {
+    final v = (value ?? 0).toInt();
+    if (v < 1000) return '$v';
+    return '${(v / 1000).toStringAsFixed(1)}k';
+  }
+
+  String? get _location {
+    final value = (SessionService().user?['location'] as String?)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
+  String? get _bio {
+    final value = (SessionService().user?['bio'] as String?)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
+  String get _joinedLabel {
+    final created =
+        DateTime.tryParse('${SessionService().user?['createdAt'] ?? ''}');
+    if (created == null) return 'New member';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return 'Joined ${months[created.month - 1]} ${created.year}';
   }
 
   @override
@@ -119,10 +178,14 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
               height: 120,
               child: Opacity(
                 opacity: 0.3,
-                child: Image.network(
-                  _bannerUrl,
-                  fit: BoxFit.cover,
-                ),
+                child: _bannerUrl == null
+                    ? Container(color: _accent.withValues(alpha: 0.35))
+                    : Image.network(
+                        _bannerUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            Container(color: _accent.withValues(alpha: 0.35)),
+                      ),
               ),
             ),
 
@@ -135,8 +198,6 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
                   // Avatar
                   Container(
-                    width: 88,
-                    height: 88,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.black, width: 4),
@@ -147,17 +208,18 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                           spreadRadius: 2,
                         ),
                       ],
-                      image: DecorationImage(
-                        image: NetworkImage(_avatarUrl),
-                        fit: BoxFit.cover,
-                      ),
+                    ),
+                    child: UserAvatar(
+                      url: _avatarUrl,
+                      fallbackName: SessionService().displayName,
+                      radius: 44,
                     ),
                   ),
                   const SizedBox(height: 12),
 
                   // Profile details
                   Text(
-                    'Alex Thorne',
+                    SessionService().displayName,
                     style: GoogleFonts.anybody(
                       color: Colors.white,
                       fontSize: 20,
@@ -170,17 +232,19 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.location_on_rounded, color: Colors.white38, size: 14),
-                      const SizedBox(width: 4),
-                      Text(
-                        'London, UK',
-                        style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 12),
-                      ),
-                      const SizedBox(width: 12),
+                      if (_location != null) ...[
+                        const Icon(Icons.location_on_rounded, color: Colors.white38, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          _location!,
+                          style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 12),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
                       const Icon(Icons.calendar_month_rounded, color: Colors.white38, size: 14),
                       const SizedBox(width: 4),
                       Text(
-                        'Joined Jan 2023',
+                        _joinedLabel,
                         style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 12),
                       ),
                     ],
@@ -189,10 +253,10 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
                   // Bio description
                   Text(
-                    'Pushing limits. Ultra-runner & Calisthenics enthusiast. Chasing the next PR.',
+                    _bio ?? 'Add a short bio to tell your Trybe who you are.',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white70,
+                      color: _bio == null ? Colors.white38 : Colors.white70,
                       fontSize: 13,
                       height: 1.4,
                     ),
@@ -278,9 +342,12 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _buildHeaderStat('1.2k', 'FOLLOWERS'),
-                      _buildHeaderStat('342', 'FOLLOWING'),
-                      _buildHeaderStat('4', 'CLIQUES'),
+                      _buildHeaderStat(
+                          _compact(_stats['followerCount'] as num?), 'FOLLOWERS'),
+                      _buildHeaderStat(
+                          _compact(_stats['followingCount'] as num?), 'FOLLOWING'),
+                      _buildHeaderStat(
+                          _compact(_stats['postCount'] as num?), 'POSTS'),
                     ],
                   ),
                 ],
@@ -317,10 +384,67 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     );
   }
 
+  Map<String, dynamic> get _summary =>
+      (_analytics['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
+
+  /// Dates (day-precision) on which the athlete recorded an activity.
+  Set<DateTime> get _activityDays {
+    final raw = (_analytics['recentActivities'] as List?) ?? const [];
+    return raw
+        .whereType<Map>()
+        .map((a) => DateTime.tryParse('${a['createdAt'] ?? ''}')?.toLocal())
+        .whereType<DateTime>()
+        .map((d) => DateTime(d.year, d.month, d.day))
+        .toSet();
+  }
+
+  /// Consecutive days ending today (or yesterday, so a rest-day-so-far
+  /// morning does not read as a broken streak).
+  int get _currentStreak {
+    final days = _activityDays;
+    if (days.isEmpty) return 0;
+    final now = DateTime.now();
+    var cursor = DateTime(now.year, now.month, now.day);
+    if (!days.contains(cursor)) {
+      cursor = cursor.subtract(const Duration(days: 1));
+      if (!days.contains(cursor)) return 0;
+    }
+    var streak = 0;
+    while (days.contains(cursor)) {
+      streak++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    return streak;
+  }
+
+  int get _bestStreak {
+    final days = _activityDays.toList()..sort();
+    if (days.isEmpty) return 0;
+    var best = 1;
+    var run = 1;
+    for (var i = 1; i < days.length; i++) {
+      if (days[i].difference(days[i - 1]).inDays == 1) {
+        run++;
+        best = run > best ? run : best;
+      } else {
+        run = 1;
+      }
+    }
+    return best;
+  }
+
   Widget _buildBentoGrid() {
     return ValueListenableBuilder<HealthDataSummary>(
       valueListenable: HealthService().healthNotifier,
       builder: (context, health, _) {
+        // Prefer workouts recorded in-app; fall back to device health data.
+        final totalDistanceKm =
+            (_summary['totalDistanceKm'] as num?)?.toDouble() ??
+                health.distanceKm;
+        final totalWorkouts = (_summary['totalWorkouts'] as num?)?.toInt() ?? 0;
+        final totalHours =
+            (_summary['totalDurationHours'] as num?)?.toDouble() ?? 0;
+
         return Column(
           children: [
             // Total Distance card
@@ -359,7 +483,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                   const SizedBox(height: 12),
                   RichText(
                     text: TextSpan(
-                      text: '${health.distanceKm} ',
+                      text: '${totalDistanceKm.toStringAsFixed(1)} ',
                       style: GoogleFonts.anybody(
                         color: Colors.white,
                         fontSize: 28,
@@ -407,7 +531,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              '428',
+                              '$totalWorkouts',
                               style: GoogleFonts.anybody(
                                 color: Colors.white,
                                 fontSize: 20,
@@ -435,7 +559,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              '340h',
+                              '${totalHours.toStringAsFixed(1)}h',
                               style: GoogleFonts.anybody(
                                 color: Colors.white,
                                 fontSize: 20,
@@ -503,7 +627,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '14 Days',
+                                '$_currentStreak ${_currentStreak == 1 ? 'Day' : 'Days'}',
                                 style: GoogleFonts.anybody(
                                   color: Colors.white,
                                   fontSize: 18,
@@ -524,7 +648,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                                 ),
                               ),
                               Text(
-                                '42 Days',
+                                '$_bestStreak ${_bestStreak == 1 ? 'Day' : 'Days'}',
                                 style: GoogleFonts.anybody(
                                   color: Colors.white54,
                                   fontSize: 9.5,
@@ -563,7 +687,15 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   }
 
   Widget _buildAchievementsSection() {
-    final showcaseBadges = AchievementData.badges.where((b) => b.unlocked).take(8).toList();
+    return ValueListenableBuilder<List<AchievementBadge>>(
+      valueListenable: AchievementService().badgesNotifier,
+      builder: (context, allBadges, _) =>
+          _buildAchievementsContent(allBadges),
+    );
+  }
+
+  Widget _buildAchievementsContent(List<AchievementBadge> allBadges) {
+    final showcaseBadges = allBadges.where((b) => b.unlocked).take(8).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -588,7 +720,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 );
               },
               child: Text(
-                'View All (${AchievementData.badges.where((b) => b.unlocked).length}/${AchievementData.badges.length})',
+                'View All (${showcaseBadges.length > 0 ? allBadges.where((b) => b.unlocked).length : 0}/${allBadges.length})',
                 style: GoogleFonts.hankenGrotesk(
                   color: _accent,
                   fontSize: 11.5,
@@ -599,6 +731,20 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           ],
         ),
         const SizedBox(height: 12),
+        if (showcaseBadges.isEmpty)
+          EmptyStateView(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            icon: Icons.emoji_events_rounded,
+            title: 'No badges yet',
+            message:
+                'Log workouts, build streaks, and join Trybes to start unlocking badges.',
+            actionLabel: 'Browse badges',
+            onAction: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const AchievementsScreen()),
+            ),
+          )
+        else
         SizedBox(
           height: 154,
           child: ListView.builder(
@@ -654,41 +800,69 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
             children: [
               SizedBox(
                 height: 100,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: 32, // 32 weeks simulation
-                  itemBuilder: (context, weekIdx) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: List.generate(7, (dayIdx) {
-                          final int hash = (weekIdx * 7 + dayIdx) % 11;
-                          Color cellColor = const Color(0xFF353438).withValues(alpha: 0.3);
-                          if (hash == 1 || hash == 5) {
-                            cellColor = _accent.withValues(alpha: 0.2);
-                          } else if (hash == 3 || hash == 8) {
-                            cellColor = _accent.withValues(alpha: 0.4);
-                          } else if (hash == 6) {
-                            cellColor = _accent.withValues(alpha: 0.7);
-                          } else if (hash == 10) {
-                            cellColor = _accent;
-                          }
+                child: Builder(builder: (context) {
+                  // Intensity per day = minutes trained that day.
+                  final minutesByDay = <DateTime, double>{};
+                  for (final entry
+                      in (_analytics['recentActivities'] as List? ?? const [])
+                          .whereType<Map>()) {
+                    final at =
+                        DateTime.tryParse('${entry['createdAt'] ?? ''}')?.toLocal();
+                    if (at == null) continue;
+                    final day = DateTime(at.year, at.month, at.day);
+                    minutesByDay[day] = (minutesByDay[day] ?? 0) +
+                        ((entry['duration'] as num?) ?? 0) / 60;
+                  }
 
-                          return Container(
-                            width: 11,
-                            height: 11,
-                            decoration: BoxDecoration(
-                              color: cellColor,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          );
-                        }),
-                      ),
-                    );
-                  },
-                ),
+                  const weeks = 32;
+                  final today = DateTime.now();
+                  final startOfToday =
+                      DateTime(today.year, today.month, today.day);
+                  // Begin on the Monday that starts the earliest visible week.
+                  final firstDay = startOfToday
+                      .subtract(Duration(days: (weeks - 1) * 7 + (today.weekday - 1)));
+
+                  return ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: weeks,
+                    itemBuilder: (context, weekIdx) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: List.generate(7, (dayIdx) {
+                            final day =
+                                firstDay.add(Duration(days: weekIdx * 7 + dayIdx));
+                            final minutes = day.isAfter(startOfToday)
+                                ? null
+                                : minutesByDay[day];
+
+                            Color cellColor =
+                                const Color(0xFF353438).withValues(alpha: 0.3);
+                            if (minutes != null && minutes > 0) {
+                              cellColor = switch (minutes) {
+                                < 20 => _accent.withValues(alpha: 0.2),
+                                < 40 => _accent.withValues(alpha: 0.4),
+                                < 70 => _accent.withValues(alpha: 0.7),
+                                _ => _accent,
+                              };
+                            }
+
+                            return Container(
+                              width: 11,
+                              height: 11,
+                              decoration: BoxDecoration(
+                                color: cellColor,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            );
+                          }),
+                        ),
+                      );
+                    },
+                  );
+                }),
               ),
               const SizedBox(height: 12),
               Row(
@@ -741,12 +915,36 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     );
   }
 
+  /// Icon for an activity type name coming from the API.
+  static IconData _iconForActivity(String type) =>
+      switch (type.toLowerCase()) {
+        'run' || 'running' => Icons.directions_run_rounded,
+        'ride' || 'cycling' || 'bike' => Icons.pedal_bike_rounded,
+        'walk' || 'walking' => Icons.directions_walk_rounded,
+        'hike' || 'hiking' => Icons.hiking_rounded,
+        'swim' || 'swimming' => Icons.pool_rounded,
+        'yoga' => Icons.self_improvement_rounded,
+        _ => Icons.fitness_center_rounded,
+      };
+
   Widget _buildFavoritesSection() {
-    final favorites = [
-      {'label': 'Running', 'icon': Icons.directions_run_rounded, 'count': '184 sessions'},
-      {'label': 'Strength', 'icon': Icons.fitness_center_rounded, 'count': '142 sessions'},
-      {'label': 'Cycling', 'icon': Icons.pedal_bike_rounded, 'count': '102 sessions'},
-    ];
+    // Rank the athlete's own activity types by how often they appear.
+    final counts = <String, int>{};
+    for (final entry
+        in (_analytics['recentActivities'] as List? ?? const []).whereType<Map>()) {
+      final type = '${entry['type'] ?? 'Workout'}';
+      counts[type] = (counts[type] ?? 0) + 1;
+    }
+    final ranked = counts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final favorites = ranked
+        .take(3)
+        .map((e) => {
+              'label': e.key,
+              'icon': _iconForActivity(e.key),
+              'count': '${e.value} ${e.value == 1 ? 'session' : 'sessions'}',
+            })
+        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -760,6 +958,15 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           ),
         ),
         const SizedBox(height: 12),
+        if (favorites.isEmpty)
+          EmptyStateView(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            icon: Icons.fitness_center_rounded,
+            title: 'No activities logged',
+            message:
+                'Record a workout and your most-trained activities will show up here.',
+          )
+        else
         Row(
           children: favorites.map((fav) {
             return Expanded(
@@ -826,35 +1033,41 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
   // ── My Posts section ────────────────────────────────────────────────────────
   Widget _buildMyPostsSection() {
-    return ListenableBuilder(
-      listenable: PostStore.instance,
-      builder: (context, _) {
-        final posts = PostStore.instance.posts;
-        if (posts.isEmpty) return const SizedBox.shrink();
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'My Posts',
-              style: GoogleFonts.anybody(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            ...posts.map((post) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _buildPostCard(post),
-                )),
-          ],
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'My Posts',
+          style: GoogleFonts.anybody(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: LoadingStateView(),
+          )
+        else if (_myPosts.isEmpty)
+          EmptyStateView(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            icon: Icons.post_add_rounded,
+            title: 'You have not posted yet',
+            message:
+                'Share a workout, a milestone, or a photo and it will appear here.',
+          )
+        else
+          ..._myPosts.map((post) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _buildPostCard(post),
+              )),
+      ],
     );
   }
 
-  Widget _buildPostCard(UserPost post) {
+  Widget _buildPostCard(Map<String, dynamic> post) {
     // Type badge color
     final Map<String, Color> typeColors = {
       'Activity': const Color(0xFF4CAF50),
@@ -862,10 +1075,22 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
       'Challenge': const Color(0xFFFF5722),
       'Update': const Color(0xFF2196F3),
     };
-    final badgeColor = typeColors[post.type] ?? _accent;
+    final postType = '${post['type'] ?? 'Update'}';
+    final postId = '${post['id'] ?? ''}';
+    final caption = '${post['caption'] ?? ''}';
+    final locationTag = post['locationTag'] as String?;
+    final imagePaths = (post['imageUrls'] is List)
+        ? List<dynamic>.from(post['imageUrls'])
+            .map((u) => ApiService.media('$u'))
+            .whereType<String>()
+            .toList()
+        : <String>[];
+    final badgeColor = typeColors[postType] ?? _accent;
 
     // Relative time
-    final diff = DateTime.now().difference(post.createdAt);
+    final createdAt =
+        DateTime.tryParse('${post['createdAt'] ?? ''}') ?? DateTime.now();
+    final diff = DateTime.now().difference(createdAt);
     String timeAgo;
     if (diff.inMinutes < 1) {
       timeAgo = 'Just now';
@@ -890,16 +1115,10 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           // Header row
           Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  image: DecorationImage(
-                    image: NetworkImage(_avatarUrl),
-                    fit: BoxFit.cover,
-                  ),
-                ),
+              UserAvatar(
+                url: _avatarUrl,
+                fallbackName: SessionService().displayName,
+                radius: 20,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -909,7 +1128,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     Row(
                       children: [
                         Text(
-                          'Alex Thorne',
+                          SessionService().displayName,
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white,
                             fontSize: 15,
@@ -925,7 +1144,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
-                            post.type,
+                            postType,
                             style: GoogleFonts.hankenGrotesk(
                               color: badgeColor,
                               fontSize: 9.5,
@@ -939,19 +1158,19 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     Row(
                       children: [
                         Text(
-                          '$timeAgo • ${post.type}',
+                          '$timeAgo • ${postType}',
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white54,
                             fontSize: 12,
                           ),
                         ),
-                        if (post.locationTag != null) ...[
+                        if (locationTag != null) ...[
                           const SizedBox(width: 6),
                           Icon(Icons.location_on_rounded,
                               color: _accent, size: 10),
                           const SizedBox(width: 2),
                           Text(
-                            post.locationTag!,
+                            locationTag,
                             style: GoogleFonts.hankenGrotesk(
                               color: _accent,
                               fontSize: 10,
@@ -965,12 +1184,14 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
               ),
               // Three-dot menu
               PopupMenuButton<String>(
-                onSelected: (value) {
+                onSelected: (value) async {
                   HapticFeedback.lightImpact();
-                  if (value == 'edit') {
-                    _showEditPostDialog(context, post);
-                  } else if (value == 'delete') {
-                    PostStore.instance.removePost(post.id);
+                  if (value == 'delete') {
+                    // Drop it locally first, then reconcile with the server.
+                    setState(() => _myPosts
+                        .removeWhere((p) => '${p['id']}' == postId));
+                    final ok = await ApiService.deletePost(postId);
+                    if (!ok) _load();
                   }
                 },
                 color: const Color(0xFF1E1E22),
@@ -985,19 +1206,6 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'edit',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.edit_rounded, color: Colors.white54, size: 16),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Edit Post',
-                          style: GoogleFonts.hankenGrotesk(color: Colors.white70, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
                   PopupMenuItem(
                     value: 'delete',
                     child: Row(
@@ -1017,10 +1225,10 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           ),
 
           // Caption
-          if (post.caption.isNotEmpty) ...[
+          if (caption.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
-              post.caption,
+              caption,
               style: GoogleFonts.hankenGrotesk(
                 color: Colors.white70,
                 fontSize: 14,
@@ -1030,9 +1238,9 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           ],
 
           // Photo grid
-          if (post.imagePaths.isNotEmpty) ...[
+          if (imagePaths.isNotEmpty) ...[
             const SizedBox(height: 12),
-            _buildPostPhotoGrid(post.imagePaths),
+            _buildPostPhotoGrid(imagePaths),
           ],
 
           const SizedBox(height: 16),
@@ -1045,8 +1253,8 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 children: [
                   Builder(
                     builder: (context) {
-                      final isLiked = _likedProfilePostIds.contains(post.id);
-                      final count = _profilePostLikesCount[post.id] ?? 0;
+                      final isLiked = _likedProfilePostIds.contains(postId);
+                      final count = _profilePostLikesCount[postId] ?? 0;
                       return _buildPostAction(
                         isLiked ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
                         '$count Likes',
@@ -1054,11 +1262,11 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                           HapticFeedback.lightImpact();
                           setState(() {
                             if (isLiked) {
-                              _likedProfilePostIds.remove(post.id);
-                              _profilePostLikesCount[post.id] = (count - 1).clamp(0, 9999);
+                              _likedProfilePostIds.remove(postId);
+                              _profilePostLikesCount[postId] = (count - 1).clamp(0, 9999);
                             } else {
-                              _likedProfilePostIds.add(post.id);
-                              _profilePostLikesCount[post.id] = count + 1;
+                              _likedProfilePostIds.add(postId);
+                              _profilePostLikesCount[postId] = count + 1;
                             }
                           });
                         },
@@ -1075,7 +1283,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                   Row(
                     children: [
                       Icon(
-                        post.audience == 'Everyone'
+                        '${post['audience'] ?? 'EVERYONE'}' == 'Everyone'
                             ? Icons.public_rounded
                             : Icons.group_rounded,
                         color: Colors.white38,
@@ -1083,7 +1291,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        post.audience,
+                        '${post['audience'] ?? 'EVERYONE'}',
                         style: GoogleFonts.hankenGrotesk(
                           color: Colors.white38,
                           fontSize: 12,
@@ -1103,7 +1311,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 constraints: const BoxConstraints(),
                 onPressed: () {
                   HapticFeedback.lightImpact();
-                  SharePlus.instance.share(ShareParams(text: "Check out my post on FiTrybe! 💪\n\n${post.caption}"));
+                  SharePlus.instance.share(ShareParams(text: "Check out my post on FiTrybe! 💪\n\n${caption}"));
                 },
               ),
             ],
@@ -1113,78 +1321,24 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     );
   }
 
-  void _showEditPostDialog(BuildContext context, UserPost post) {
-    final controller = TextEditingController(text: post.caption);
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF1E1E22),
-          title: Text(
-            'Edit Post',
-            style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          content: TextField(
-            controller: controller,
-            maxLines: 4,
-            style: GoogleFonts.hankenGrotesk(color: Colors.white, fontSize: 14),
-            decoration: InputDecoration(
-              hintText: 'Edit your post...',
-              hintStyle: GoogleFonts.hankenGrotesk(color: Colors.white38),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: _accent),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancel', style: GoogleFonts.hankenGrotesk(color: Colors.white54)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final newCaption = controller.text.trim();
-                if (newCaption.isNotEmpty) {
-                  PostStore.instance.removePost(post.id);
-                  PostStore.instance.addPost(
-                    UserPost(
-                      id: post.id,
-                      caption: newCaption,
-                      type: post.type,
-                      audience: post.audience,
-                      locationTag: post.locationTag,
-                      imagePaths: post.imagePaths,
-                      createdAt: post.createdAt,
-                    ),
-                  );
-                }
-                Navigator.pop(context);
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: _accent),
-              child: Text('Save', style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
+  /// Post photos are served by the API, so these are network images.
   Widget _buildPostPhotoGrid(List<String> paths) {
+    Widget photo(String url, {BoxFit fit = BoxFit.cover}) => Image.network(
+          url,
+          fit: fit,
+          errorBuilder: (_, __, ___) => Container(
+            color: _cardBg,
+            child: const Icon(Icons.broken_image_rounded,
+                color: Colors.white24, size: 24),
+          ),
+        );
+
     if (paths.length == 1) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: AspectRatio(
           aspectRatio: 4 / 3,
-          child: Image.file(
-            File(paths[0]),
-            fit: BoxFit.cover,
-            width: double.infinity,
-          ),
+          child: SizedBox(width: double.infinity, child: photo(paths[0])),
         ),
       );
     }
@@ -1200,7 +1354,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
       itemCount: paths.length > 5 ? 5 : paths.length,
       itemBuilder: (context, i) => ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: Image.file(File(paths[i]), fit: BoxFit.cover),
+        child: photo(paths[i]),
       ),
     );
   }

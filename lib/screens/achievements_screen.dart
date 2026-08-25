@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/achievement_model.dart';
 import '../widgets/achievement_badge_widget.dart';
-import '../services/api_service.dart';
+import '../services/achievement_service.dart';
 
 class AchievementsScreen extends StatefulWidget {
   static const routeName = '/AchievementsScreen';
@@ -26,21 +26,22 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   void initState() {
     super.initState();
     AchievementBadgeArt.precache(AchievementData.badges.map((b) => b.id));
-    _syncServerAchievements();
-  }
-
-  Future<void> _syncServerAchievements() async {
-    try {
-      await ApiService.getAchievements();
-    } catch (_) {}
+    AchievementService().sync();
   }
 
   @override
   Widget build(BuildContext context) {
-    final allBadges = AchievementData.badges;
+    return ValueListenableBuilder<List<AchievementBadge>>(
+      valueListenable: AchievementService().badgesNotifier,
+      builder: (context, allBadges, _) => _buildContent(context, allBadges),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, List<AchievementBadge> allBadges) {
     final totalCount = allBadges.length;
     final unlockedCount = allBadges.where((b) => b.unlocked).length;
-    final percent = (unlockedCount / totalCount * 100).round();
+    final percent =
+        totalCount == 0 ? 0 : (unlockedCount / totalCount * 100).round();
 
     return Scaffold(
       backgroundColor: _bg,
@@ -155,7 +156,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(4),
                           child: LinearProgressIndicator(
-                            value: unlockedCount / totalCount,
+                            value: totalCount == 0 ? 0 : unlockedCount / totalCount,
                             minHeight: 7,
                             backgroundColor: Colors.white10,
                             valueColor: AlwaysStoppedAnimation<Color>(_accent),

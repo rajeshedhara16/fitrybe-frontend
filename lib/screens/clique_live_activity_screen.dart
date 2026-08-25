@@ -4,10 +4,17 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../models/post_store.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../services/socket_service.dart';
+import '../services/achievement_service.dart';
+import '../widgets/state_views.dart';
+import '../widgets/user_avatar.dart';
 
 class CliqueLiveActivityScreen extends StatefulWidget {
   static const routeName = '/CliqueLiveActivityScreen';
+  /// Server id of the clique session this screen is driving.
+  final String? sessionId;
   final bool isUpcoming;
   final String scheduledTime;
   final String activityName;
@@ -19,6 +26,7 @@ class CliqueLiveActivityScreen extends StatefulWidget {
 
   const CliqueLiveActivityScreen({
     super.key,
+    this.sessionId,
     this.isUpcoming = false,
     this.scheduledTime = 'Today, 7:30 PM',
     this.activityName = 'Morning Trail Run',
@@ -72,79 +80,9 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   // Leaderboard filter
   String _selectedMetricFilter = 'DISTANCE';
 
-  // Squad participants for Leaderboard & Lobby
-  final List<Map<String, dynamic>> _squadMembers = [
-    {
-      'id': '1',
-      'name': 'Alex (You)',
-      'isAdmin': true,
-      'isYou': true,
-      'distance': 0.0,
-      'pace': "5'30\"",
-      'calories': 0,
-      'heartRate': 142,
-      'isReady': true,
-      'status': 'ON ROUTE',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuAhuan_9XDiLjk_DLAjsoiXsObZdg1XuOCm058HttWKateqbt9N7G0pbaUteIwR1gRhEah1bvRME8DuvjYOYwCPGDerNdxvcdgM846c1TD3-rehVMAJYVULf4HxyhRlP_Z_-1HWHv_2waIrSsAmbU46yU8rIpxxWndxcPyf6iBvjGgHGhHg3uNmwnHa9eu6FY93UiHqis-Hu0xkS5nW6AHd_CGiSqxFzFH0ZqXMUF0XRxFYH-8dPwIQ',
-    },
-    {
-      'id': '2',
-      'name': 'Sam',
-      'isAdmin': false,
-      'isYou': false,
-      'distance': 5.12,
-      'pace': "5'15\"",
-      'calories': 310,
-      'heartRate': 156,
-      'isReady': true,
-      'status': 'LEADING',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuB_Tea3Dd8fZEwZwVBX6nlcLDGnZQEavh5VH22dcwrj5GtBWQjd4eVjGiiN78-seFzH33qRU4M9Ua5tdVkCRucCPndKPmTbpXp1ZvlwZXzJBH2xEDDOXhrp7qxBO2O7C0RFUyKE5VSSmoqiBQsHNyYokCS1JNfUiCUMcddTCknNmjinzT21tgWB56sIj9-3YKag19ufFUolU9CCJN1dnIDTJytZ3Nl6xyQDYyTWeX-hCs860KeZi054',
-    },
-    {
-      'id': '3',
-      'name': 'Jordan',
-      'isAdmin': false,
-      'isYou': false,
-      'distance': 4.85,
-      'pace': "5'45\"",
-      'calories': 285,
-      'heartRate': 148,
-      'isReady': false,
-      'status': 'SPRINTING',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuClOU2R-5Ojc_Q8zmrm27jSg2B_MK73_iyrnEWjkPIsCf9qhmtXPnyLfJIgWg4QjehQnjQD_ey2vrAYvcDQjDpdZtBo7fhsKX6KIK6T54EuCuBzn4B-0rQsT-hLewZC1uE2KUa8rmyffTjtzcDsJe-RQ2OqyDf_KIr5lC0cnqE8uta4flrGT_pLqS37tHdWbiHTNP_685LyRsiVscEMwN7mrQQOfvJSTZpbNpLVWYRYUwwZ9WV3gpKb',
-    },
-    {
-      'id': '4',
-      'name': 'David Kim',
-      'isAdmin': false,
-      'isYou': false,
-      'distance': 4.20,
-      'pace': "6'05\"",
-      'calories': 260,
-      'heartRate': 138,
-      'isReady': true,
-      'status': 'STEADY',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuA6WB0sfMAaFfo5F_dwIad6ZGs7ulSBob3FMmrDmhtOJzchQRO1kQ477arp3E_zqR1e2HRU4O9zPR6NulCUQptJRJL0L1KYYDH5oPi92uqu8QsqUw-8xM09asGESGFKFyWIvWKw1Nl41cSnNhPABCmfjR6-XsgdajoAlsmMS8XGD13wiRcs-ayK0jhokb9QShfCCCYpwxgnKyz27HxCLrn5LXsL65kly2HvBKh8-o7-1dMd4-7UWF2HIklx4QomICGvKy6NbcwPmwo',
-    },
-    {
-      'id': '5',
-      'name': 'Maya Patel',
-      'isAdmin': false,
-      'isYou': false,
-      'distance': 3.90,
-      'pace': "6'20\"",
-      'calories': 240,
-      'heartRate': 135,
-      'isReady': true,
-      'status': 'CRUISING',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDAP1fzvajosGDCVTnUyqq4353TwT5L9hbdzIAbfVjL23jJvqwjbbg9OEdJD3tgrwrmFKd9QBHpnh_P_TAreUaxMF87aHQGluoDMjKAIMNydXCSFOz7NoDC-C0qQ0PAQytcLv3yf-_Ht2YrCPaoIeHWLOjIWHct32nVuTRlVDle0tfc8u70qmwS3nvQ6yfc3tpX2A_w0nrzZOlzqFt3ArMcMGIp3JUD66upNfTKxZBZ-Dwvs3Mtpy1CCuj2LRYp3YM6QZk5MMqMx2A',
-    },
-  ];
+  // Squad participants for Leaderboard & Lobby, loaded from the session.
+  List<Map<String, dynamic>> _squadMembers = [];
+  bool _isSquadLoading = true;
 
   @override
   void initState() {
@@ -163,10 +101,113 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
+    _loadSession();
+    _joinTelemetryRoom();
+  }
+
+  /// Subscribes to the session room so other participants' GPS telemetry
+  /// updates the leaderboard live.
+  void _joinTelemetryRoom() {
+    final id = widget.sessionId;
+    if (id == null) return;
+    final socket = SocketService();
+    socket.connect();
+    socket.emit('clique:join', id);
+    socket.on('clique:telemetry_update', _onTelemetry);
+    socket.on('clique:status_updated', _onStatusUpdated);
+  }
+
+  void _onTelemetry(dynamic data) {
+    if (data is! Map || !mounted) return;
+    final payload = Map<String, dynamic>.from(data);
+    final userId = '${payload['userId'] ?? ''}';
+    final index = _squadMembers.indexWhere((m) => m['id'] == userId);
+    if (index == -1) return;
+
+    setState(() {
+      _squadMembers[index]['distance'] =
+          ((payload['distance'] as num?)?.toDouble() ?? 0) / 1000;
+      _squadMembers[index]['calories'] =
+          ((payload['calories'] as num?) ?? 0).toInt();
+      final pace = (payload['pace'] as num?)?.toDouble();
+      if (pace != null) _squadMembers[index]['pace'] = _formatPace(pace);
+    });
+  }
+
+  void _onStatusUpdated(dynamic data) {
+    if (data is! Map || !mounted) return;
+    if ('${data['status']}'.toUpperCase() == 'LIVE') {
+      setState(() => _isUpcoming = false);
+    }
+  }
+
+  static String _formatPace(double minutesPerKm) {
+    if (minutesPerKm <= 0 || minutesPerKm.isInfinite) return "--'--\"";
+    final minutes = minutesPerKm.floor();
+    final seconds = ((minutesPerKm - minutes) * 60).round();
+    return "$minutes'${seconds.toString().padLeft(2, '0')}\"";
+  }
+
+  Future<void> _loadSession() async {
+    final id = widget.sessionId;
+    if (id == null) {
+      if (mounted) setState(() => _isSquadLoading = false);
+      return;
+    }
+
+    final session = await ApiService.getClique(id);
+    if (!mounted || session == null) {
+      if (mounted) setState(() => _isSquadLoading = false);
+      return;
+    }
+
+    final myId = SessionService().userId;
+    final participants = (session['participants'] as List?) ?? const [];
+
+    setState(() {
+      _isUpcoming = '${session['status']}'.toUpperCase() != 'LIVE';
+      _selectedActivityName = '${session['title'] ?? _selectedActivityName}';
+      _selectedActivityType =
+          '${session['activityType'] ?? _selectedActivityType}';
+      final target = (session['targetDistance'] as num?)?.toDouble();
+      if (target != null && target > 0) _goalValue = target;
+
+      _squadMembers = participants.whereType<Map>().map((raw) {
+        final p = Map<String, dynamic>.from(raw);
+        final user = (p['user'] is Map)
+            ? Map<String, dynamic>.from(p['user'])
+            : const <String, dynamic>{};
+        final userId = '${p['userId'] ?? user['id'] ?? ''}';
+        final isYou = userId == myId;
+        final name =
+            '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+
+        return {
+          'id': userId,
+          'name': isYou ? 'You' : (name.isEmpty ? 'Athlete' : name),
+          'isAdmin': '${p['role'] ?? ''}'.toUpperCase() == 'HOST',
+          'isYou': isYou,
+          'distance': ((p['currentDistance'] as num?)?.toDouble() ?? 0) / 1000,
+          'pace': _formatPace((p['currentPace'] as num?)?.toDouble() ?? 0),
+          'calories': 0,
+          'heartRate': 0,
+          'isReady': '${p['status'] ?? ''}'.toUpperCase() != 'INVITED',
+          'status': '${p['status'] ?? 'JOINED'}',
+          'avatar': ApiService.media(user['avatarUrl'] as String?),
+        };
+      }).toList();
+      _isSquadLoading = false;
+    });
   }
 
   @override
   void dispose() {
+    SocketService()
+      ..off('clique:telemetry_update')
+      ..off('clique:status_updated');
+    if (widget.sessionId != null) {
+      SocketService().emit('clique:leave', widget.sessionId);
+    }
     _pulseController.dispose();
     _stopwatchTimer?.cancel();
     super.dispose();
@@ -197,6 +238,14 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           _isRecording = true;
           _isPaused = false;
         });
+        // Flip the session to LIVE so the rest of the squad is pulled in.
+        if (widget.sessionId != null) {
+          ApiService.updateCliqueStatus(widget.sessionId!, 'LIVE');
+          SocketService().emit('clique:status_change', {
+            'sessionId': widget.sessionId,
+            'status': 'LIVE',
+          });
+        }
         _startTimer();
       }
     });
@@ -217,29 +266,31 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           final rand = Random();
           _activeHeartRate = 140 + rand.nextInt(10);
 
-          // Update user's squad member record
-          final you = _squadMembers.firstWhere(
-            (m) => m['isYou'] == true,
-            orElse: () => _squadMembers[0],
-          );
-          you['distance'] = _activeDistance;
-          you['calories'] = _activeCalories;
-          you['heartRate'] = _activeHeartRate;
-          you['pace'] = _getPaceString();
-
-          // Smoothly advance other squad members for live dynamic competition feel
-          for (var member in _squadMembers) {
-            if (member['isYou'] != true) {
-              final double inc = 0.0025 + (rand.nextDouble() * 0.0012);
-              member['distance'] = (member['distance'] as double) + inc;
-              member['calories'] =
-                  ((member['distance'] as double) * 60).toInt();
-            }
+          // Update the signed-in athlete's row. Other rows move only when
+          // their device sends telemetry over the socket.
+          final myIndex = _squadMembers.indexWhere((m) => m['isYou'] == true);
+          if (myIndex != -1) {
+            _squadMembers[myIndex]['distance'] = _activeDistance;
+            _squadMembers[myIndex]['calories'] = _activeCalories;
+            _squadMembers[myIndex]['heartRate'] = _activeHeartRate;
+            _squadMembers[myIndex]['pace'] = _getPaceString();
           }
 
           // Dynamic sort based on chosen metric
           _sortSquadMembers();
         });
+
+        // Broadcast our progress to the rest of the squad once per second.
+        if (widget.sessionId != null) {
+          SocketService().emit('clique:telemetry', {
+            'sessionId': widget.sessionId,
+            'distance': _activeDistance * 1000,
+            'calories': _activeCalories,
+            'pace': _activeDistance > 0.01
+                ? (_elapsedSeconds / 60) / _activeDistance
+                : 0,
+          });
+        }
       }
     });
   }
@@ -261,37 +312,67 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     });
   }
 
-  void _finishAndSaveActivity() {
+  Future<void> _finishAndSaveActivity() async {
     HapticFeedback.heavyImpact();
     _stopwatchTimer?.cancel();
+
     final formattedTime = _formatElapsedTime(_elapsedSeconds);
     final statsString =
         "Distance: ${_activeDistance.toStringAsFixed(2)} KM, Duration: $formattedTime, Calories: $_activeCalories KCAL.";
-    PostStore.instance.addPost(
-      UserPost(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
+
+    try {
+      // Save the workout itself, then share it to the feed.
+      final activity = await ApiService.logActivity({
+        'title': _selectedActivityName,
+        'type': _selectedActivityType,
+        'duration': _elapsedSeconds,
+        'distance': _activeDistance * 1000,
+        'calories': _activeCalories,
+        if (_activeDistance > 0.01)
+          'avgPace': (_elapsedSeconds / 60) / _activeDistance,
+      });
+
+      await ApiService.createPost(
         caption:
             "Just completed a $_selectedActivityType ($_selectedActivityName) workout with my Clique! $statsString",
-        type: "Activity",
-        audience: "Everyone",
-        locationTag: "San Francisco, CA",
-        imagePaths: [],
-        createdAt: DateTime.now(),
-      ),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: _accent,
-        content: Text(
-          '$_selectedActivityName activity saved successfully!',
-          style: GoogleFonts.hankenGrotesk(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
+        type: 'Activity',
+        activityId: activity?['id'] as String?,
+      );
+
+      // The host closing the session ends it for everyone.
+      if (widget.sessionId != null && _currentUserIsAdmin) {
+        await ApiService.updateCliqueStatus(widget.sessionId!, 'COMPLETED');
+      }
+      AchievementService().sync();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _accent,
+          content: Text(
+            '$_selectedActivityName activity saved successfully!',
+            style: GoogleFonts.hankenGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-      ),
-    );
-    Navigator.pop(context);
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not save this activity. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
   }
 
   String _formatElapsedTime(int seconds) {
@@ -770,16 +851,30 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           ),
         ),
         const SizedBox(height: 10),
-        ListView.separated(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: _squadMembers.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 8),
-          itemBuilder: (context, index) {
-            final member = _squadMembers[index];
-            return _buildRankTile(member, index + 1);
-          },
-        ),
+        if (_isSquadLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: LoadingStateView(),
+          )
+        else if (_squadMembers.isEmpty)
+          EmptyStateView(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            icon: Icons.groups_rounded,
+            title: 'No one has joined yet',
+            message:
+                'Invite friends to this session and their live stats will appear here.',
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _squadMembers.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final member = _squadMembers[index];
+              return _buildRankTile(member, index + 1);
+            },
+          ),
       ],
     );
   }
@@ -825,13 +920,10 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           const SizedBox(width: 8),
 
           // Avatar
-          ClipOval(
-            child: Image.network(
-              member['avatar'] as String,
-              width: 38,
-              height: 38,
-              fit: BoxFit.cover,
-            ),
+          UserAvatar(
+            url: member['avatar'] as String?,
+            fallbackName: member['name'] as String?,
+            radius: 19,
           ),
           const SizedBox(width: 12),
 
@@ -1507,31 +1599,40 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   // ─── Interactive Helper Sheets ────────────────────────────────────────────
   void _showInviteSheet() {
     HapticFeedback.mediumImpact();
-    final List<Map<String, String>> availableFriends = [
-      {
-        'name': 'David Kim',
-        'subtitle': '@davidk • Swimmer',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuA6WB0sfMAaFfo5F_dwIad6ZGs7ulSBob3FMmrDmhtOJzchQRO1kQ477arp3E_zqR1e2HRU4O9zPR6NulCUQptJRJL0L1KYYDH5oPi92uqu8QsqUw-8xM09asGESGFKFyWIvWKw1Nl41cSnNhPABCmfjR6-XsgdajoAlsmMS8XGD13wiRcs-ayK0jhokb9QShfCCCYpwxgnKyz27HxCLrn5LXsL65kly2HvBKh8-o7-1dMd4-7UWF2HIklx4QomICGvKy6NbcwPmwo',
-      },
-      {
-        'name': 'Maya Patel',
-        'subtitle': '@mayap • Yoga Enthusiast',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuDAP1fzvajosGDCVTnUyqq4353TwT5L9hbdzIAbfVjL23jJvqwjbbg9OEdJD3tgrwrmFKd9QBHpnh_P_TAreUaxMF87aHQGluoDMjKAIMNydXCSFOz7NoDC-C0qQ0PAQytcLv3yf-_Ht2YrCPaoIeHWLOjIWHct32nVuTRlVDle0tfc8u70qmwS3nvQ6yfc3tpX2A_w0nrzZOlzqFt3ArMcMGIp3JUD66upNfTKxZBZ-Dwvs3Mtpy1CCuj2LRYp3YM6QZk5MMqMx2A',
-      },
-      {
-        'name': 'Chris Vance',
-        'subtitle': '@chris.v • Crossfit',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuBWx5umQiyz5zTsO2R59sz6-ZJBoCs_nZs85WNJFvHFAXTu2QdPMQAnLFwnsOjJEqaKcAdcpv9qPq6NQlJV7p3SyDX5EIVrn0bEU9-AP4_8x_xEUVHdOiDAP3wLWp-IHQa66Tlzzu2-LDvsB2lxqL53shYINDqc8cVbqVZ_A5LMSmdfU-nToulwi9Fj81mCD9UTzqkJlubLx5AcUiLKC8JqNPOE2QnZ7YAtQXOmHziYWkiMpbPMGmnYNiBMEoC970DEuzYd659rK9k',
-      },
-    ];
+    final sessionId = widget.sessionId;
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) {
+        // Candidates are the athletes you follow who are not already in the
+        // squad; invites are sent through the API.
+        List<Map<String, dynamic>> candidates = [];
+        final invitedIds = <String>{};
+        bool inviteLoading = true;
+
+        return StatefulBuilder(builder: (context, setSheetState) {
+        if (inviteLoading) {
+          final myId = SessionService().userId;
+          if (myId == null) {
+            inviteLoading = false;
+          } else {
+            ApiService.getFollowing(myId).then((following) {
+              final existing =
+                  _squadMembers.map((m) => '${m['id']}').toSet();
+              candidates = following
+                  .where((u) => !existing.contains('${u['id']}'))
+                  .toList();
+              inviteLoading = false;
+              setSheetState(() {});
+            }).catchError((_) {
+              inviteLoading = false;
+              setSheetState(() {});
+            });
+          }
+        }
+
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
           child: BackdropFilter(
@@ -1563,72 +1664,83 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                     ),
                   ),
                   const SizedBox(height: 16),
-                  ...availableFriends.map((f) {
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: ClipOval(
-                        child: Image.network(
-                          f['avatar']!,
-                          width: 40,
-                          height: 40,
-                          fit: BoxFit.cover,
+                  if (inviteLoading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 28),
+                      child: LoadingStateView(),
+                    )
+                  else if (candidates.isEmpty)
+                    EmptyStateView(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      icon: Icons.person_add_alt_1_rounded,
+                      title: 'No one to invite yet',
+                      message:
+                          'Follow athletes from the Trybes tab and you can pull them into your sessions.',
+                    )
+                  else
+                    ...candidates.map((f) {
+                      final userId = f['id'] as String?;
+                      final name =
+                          '${f['firstName'] ?? ''} ${f['lastName'] ?? ''}'.trim();
+                      final display = name.isEmpty ? 'Athlete' : name;
+                      final invited = invitedIds.contains(userId);
+
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: UserAvatar(
+                          url: ApiService.media(f['avatarUrl'] as String?),
+                          fallbackName: display,
+                          radius: 20,
                         ),
-                      ),
-                      title: Text(
-                        f['name']!,
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      subtitle: Text(
-                        f['subtitle']!,
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: ElevatedButton(
-                        onPressed: () {
-                          HapticFeedback.lightImpact();
-                          setState(() {
-                            _squadMembers.add({
-                              'id': DateTime.now()
-                                  .millisecondsSinceEpoch
-                                  .toString(),
-                              'name': f['name']!,
-                              'isAdmin': false,
-                              'isYou': false,
-                              'distance': 0.0,
-                              'pace': "5'45\"",
-                              'calories': 0,
-                              'heartRate': 140,
-                              'isReady': true,
-                              'status': 'ON ROUTE',
-                              'avatar': f['avatar']!,
-                            });
-                          });
-                          Navigator.pop(context);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _accent,
-                          shape: const StadiumBorder(),
-                        ),
-                        child: Text(
-                          'Invite',
+                        title: Text(
+                          display,
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ),
-                    );
-                  }),
+                        subtitle: Text(
+                          '${f['location'] ?? 'Fitrybe athlete'}',
+                          style: GoogleFonts.hankenGrotesk(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: ElevatedButton(
+                          onPressed: (invited || userId == null || sessionId == null)
+                              ? null
+                              : () async {
+                                  HapticFeedback.lightImpact();
+                                  final ok = await ApiService.inviteToClique(
+                                      sessionId, userId);
+                                  if (ok) {
+                                    invitedIds.add(userId);
+                                    setSheetState(() {});
+                                    _loadSession();
+                                  }
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _accent,
+                            disabledBackgroundColor:
+                                _accent.withValues(alpha: 0.3),
+                            shape: const StadiumBorder(),
+                          ),
+                          child: Text(
+                            invited ? 'Invited' : 'Invite',
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
                 ],
               ),
             ),
           ),
         );
+        });
       },
     );
   }
@@ -1891,13 +2003,10 @@ class _SlidableSquadTileState extends State<SlidableSquadTile> {
         children: [
           Row(
             children: [
-              ClipOval(
-                child: Image.network(
-                  widget.member['avatar'] as String,
-                  width: 42,
-                  height: 42,
-                  fit: BoxFit.cover,
-                ),
+              UserAvatar(
+                url: widget.member['avatar'] as String?,
+                fallbackName: widget.member['name'] as String?,
+                radius: 21,
               ),
               const SizedBox(width: 12),
               Column(

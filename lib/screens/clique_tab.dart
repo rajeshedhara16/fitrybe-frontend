@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../widgets/state_views.dart';
+import '../widgets/user_avatar.dart';
 
 class CliqueTab extends StatefulWidget {
   final ValueChanged<int>? onSubTabChanged;
@@ -23,74 +27,10 @@ class _CliqueTabState extends State<CliqueTab>
 
   final Set<String> _joinedUpcomingIds = {};
 
-  final List<Map<String, dynamic>> _liveActivities = [
-    {
-      'id': 'live_1',
-      'title': 'Morning Trail Run ☀️',
-      'clique': 'Daily Cardio Crew',
-      'category': 'Running',
-      'type': 'Running',
-      'icon': Icons.directions_run_rounded,
-      'progress': 0.72,
-      'progressText': '3.6 / 5.0 KM',
-      'participantsCount': 4,
-      'maxParticipants': 5,
-    },
-    {
-      'id': 'live_2',
-      'title': 'Sunset Speed Cycling 🚴',
-      'clique': 'Bay Area Cyclists',
-      'category': 'Cycling',
-      'type': 'Cycling',
-      'icon': Icons.directions_bike_rounded,
-      'progress': 0.45,
-      'progressText': '11.2 / 25.0 KM',
-      'participantsCount': 6,
-      'maxParticipants': 8,
-    },
-  ];
-
-  final List<Map<String, dynamic>> _upcomingActivities = [
-    {
-      'id': 'up_1',
-      'title': 'Evening Walk',
-      'category': 'Walking',
-      'type': 'Walking',
-      'icon': Icons.directions_walk_rounded,
-      'dateDay': '19',
-      'dateMonth': 'OCT',
-      'time': '7:00 PM',
-      'target': '10k Steps Target',
-      'participantsCount': 5,
-      'maxParticipants': 8,
-    },
-    {
-      'id': 'up_2',
-      'title': 'Weekend 50K Bike Ride',
-      'category': 'Cycling',
-      'type': 'Cycling',
-      'icon': Icons.directions_bike_rounded,
-      'dateDay': '22',
-      'dateMonth': 'OCT',
-      'time': '6:30 AM',
-      'target': '50.0 KM Distance',
-      'participantsCount': 7,
-      'maxParticipants': 12,
-    },
-    {
-      'id': 'up_3',
-      'title': 'Sunrise Lake Swim',
-      'category': 'Swimming',
-      'type': 'Swimming',
-      'icon': Icons.pool_rounded,
-      'dateDay': '24',
-      'dateMonth': 'OCT',
-      'time': '8:00 AM',
-      'target': '2.0 KM Laps',
-      'participantsCount': 3,
-      'maxParticipants': 6,
-    },
-  ];
+  List<Map<String, dynamic>> _liveActivities = [];
+  List<Map<String, dynamic>> _upcomingActivities = [];
+  bool _isActivitiesLoading = true;
+  String? _activitiesError;
 
   late AnimationController _liveBlinkController;
 
@@ -99,63 +39,7 @@ class _CliqueTabState extends State<CliqueTab>
   Map<String, dynamic>? _selectedOrbitMember;
   late AnimationController _orbitFloatController;
 
-  final List<Map<String, dynamic>> _orbitMembers = [
-    {
-      'id': 1,
-      'name': 'Alex',
-      'synergy': '88%',
-      'streak': '5d',
-      'dist': '120k',
-      'time': '15h',
-      'activities': '24',
-      'fav': 'Trail Running',
-      'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXupnMbL7ZDy_tRGVMEC1kpOvCgABrgviZkefNrNTx1k9I3H2UqRESPETj4d_xOKaCGFpbAh6kgfIzJV_5tvj9Y8Zji5qRG3PYKUrX0xs_h1nsfbpq44IIVQ2NJD4M8y4znvLPn7lfHirD7jwSLv0UhPmqj5GKzptgONnf5Ky04hsm-9yNnEI5T9B9dl6nhZNdiq0SB7jWKKd4XKSrq0C5I-mWdTuVeytelYr_p8_Ecr1KwFJwlOu_c',
-    },
-    {
-      'id': 2,
-      'name': 'Elena',
-      'synergy': '72%',
-      'streak': '3d',
-      'dist': '45k',
-      'time': '8h',
-      'activities': '12',
-      'fav': 'Yoga',
-      'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDCQQabYLTohBmurAKr1RUN2IAmRiPuGsqFmInWzHEf__Aq8Lrup0DEecMWshiQqtOB1HAs-8fkX6PyMCEda_L3qGqU0Hd3pZ6C2Y99UPYmQjEvRzMX1Ola5UWClM-T51g-lXpPghN0dwlp7dEba8xTJJu76POnA9jCcIucHyiHs382ck93N92xzFSCg5Ed3_FxMZ4LfiX1hUbWrKGISFRwSRvCzC5BrI0mY3Ul_Hg9WbhgXrTKTFZULhLCg3sEkwFHYGol8j0dPoc',
-    },
-    {
-      'id': 3,
-      'name': 'Marcus',
-      'synergy': '94%',
-      'streak': '12d',
-      'dist': '240k',
-      'time': '28h',
-      'activities': '48',
-      'fav': 'Cycling',
-      'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuBgjRSNIhjmFhRP_8S3tuvi1UgLC68VGmAkh42cOH9VQliTiy7tCc6SthMMHXDQA4u5KVBjJbgUpMGDWngdIa0napfGh8KuaI2R7Vg5APFj_FuEPtSycFIZ0S48-A0mTSDF9pEM1B68-1eG3zJonxwSmwvmtIGw9-09xvJbXE20Bc3pv4KvyqQJNn1emw8tMbAY9KUjxJD_Lmjaw4Duenm3KPou27843mgzy-OF2cdC5p_ej4RvuGJAVUmHusIFbL2nb5sunZYAAqE',
-    },
-    {
-      'id': 4,
-      'name': 'Sarah',
-      'synergy': '82%',
-      'streak': '8d',
-      'dist': '90k',
-      'time': '12h',
-      'activities': '18',
-      'fav': 'Swimming',
-      'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDKbEFetka61Uzn8RD44STxX3QwAz_xcaaMZ-qzvnunUmBoges-xYFwWQTFpXij18kynNXL1kCjJ7eHZrLBexMEquhDjbpT30ThWjuWEdlZaW_ByrqJdvwg18EsATBXBVms3RCoQVOkpH9PeZiVTAQVE1iGclOOB2OwI8EIuMCCTrdCrl7qcAnsjMphuMjE9MqHlVIp1wCbJOr1ql0Bsee3LkdKqgpT6d9PbFZUGm8ojitxqhE6k0tOEM1_5PnJwz9-xYmUS1H2faU',
-    },
-    {
-      'id': 5,
-      'name': 'Dave',
-      'synergy': '79%',
-      'streak': '4d',
-      'dist': '65k',
-      'time': '9h',
-      'activities': '15',
-      'fav': 'Weightlifting',
-      'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuBWx5umQiyz5zTsO2R59sz6-ZJBoCs_nZs85WNJFvHFAXTu2QdPMQAnLFwnsOjJEqaKcAdcpv9qPq6NQlJV7p3SyDX5EIVrn0bEU9-AP4_8x_xEUVHdOiDAP3wLWp-IHQa66Tlzzu2-LDvsB2lxqL53shYINDqc8cVbqVZ_A5LMSmdfU-nToulwi9Fj81mCD9UTzqkJlubLx5AcUiLKC8JqNPOE2QnZ7YAtQXOmHziYWkiMpbPMGmnYNiBMEoC970DEuzYd659rK9k',
-    },
-  ];
+  List<Map<String, dynamic>> _orbitMembers = [];
 
   @override
   void initState() {
@@ -168,6 +52,183 @@ class _CliqueTabState extends State<CliqueTab>
       vsync: this,
       duration: const Duration(milliseconds: 3000),
     )..repeat(reverse: true);
+    _loadSessions();
+    _loadOrbit();
+  }
+
+  Future<void> _loadSessions() async {
+    if (mounted) setState(() => _activitiesError = null);
+    try {
+      final sessions = await ApiService.getCliques();
+      if (!mounted) return;
+      setState(() {
+        _liveActivities = sessions
+            .where((s) => '${s['status']}'.toUpperCase() == 'LIVE')
+            .map(_toActivityCard)
+            .toList();
+        _upcomingActivities = sessions
+            .where((s) => '${s['status']}'.toUpperCase() == 'UPCOMING')
+            .map(_toActivityCard)
+            .toList();
+        _isActivitiesLoading = false;
+      });
+    } catch (e) {
+      debugPrint('CliqueTab load error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isActivitiesLoading = false;
+        _activitiesError = 'We could not load group activities.';
+      });
+    }
+  }
+
+  /// The Synergy orbit shows the athletes you follow.
+  Future<void> _loadOrbit() async {
+    final userId = SessionService().userId;
+    if (userId == null) return;
+    final following = await ApiService.getFollowing(userId);
+    if (!mounted) return;
+    setState(() {
+      _orbitMembers = following.take(8).map((user) {
+        final name = '${user['firstName'] ?? ''}'.trim();
+        return {
+          'id': user['id'],
+          'name': name.isEmpty ? 'Athlete' : name,
+          'avatar': ApiService.media(user['avatarUrl'] as String?),
+          'location': user['location'],
+          'bio': user['bio'],
+        };
+      }).toList();
+    });
+  }
+
+  /// Loads a followed athlete's real training numbers for the detail sheet.
+  ///
+  /// "Synergy" is the share of your own training days in the last 30 that they
+  /// also trained on — a measurable overlap rather than an invented score.
+  Future<void> _loadOrbitMemberStats(Map<String, dynamic> member) async {
+    final memberId = member['id'] as String?;
+    final myId = SessionService().userId;
+    if (memberId == null || member['statsLoaded'] == true) return;
+
+    final results = await Future.wait([
+      ApiService.getActivities(userId: memberId, limit: 100),
+      if (myId != null)
+        ApiService.getActivities(userId: myId, limit: 100)
+      else
+        Future.value(<Map<String, dynamic>>[]),
+    ]);
+    if (!mounted) return;
+
+    final theirs = results[0];
+    final mine = results[1];
+
+    double totalMeters = 0;
+    int totalSeconds = 0;
+    for (final a in theirs) {
+      totalMeters += (a['distance'] as num?)?.toDouble() ?? 0;
+      totalSeconds += ((a['duration'] as num?) ?? 0).toInt();
+    }
+
+    final theirDays = _activeDays(theirs);
+    final myDays = _activeDays(mine);
+    final cutoff = DateTime.now().subtract(const Duration(days: 30));
+    final myRecent = myDays.where((d) => d.isAfter(cutoff)).toSet();
+    final shared = myRecent.intersection(theirDays).length;
+    final synergy =
+        myRecent.isEmpty ? 0 : ((shared / myRecent.length) * 100).round();
+
+    setState(() {
+      member['activities'] = '${theirs.length}';
+      member['dist'] = '${(totalMeters / 1000).toStringAsFixed(1)}k';
+      member['time'] = '${(totalSeconds / 3600).toStringAsFixed(1)}h';
+      member['streak'] = '${_streakFrom(theirDays)}d';
+      member['synergy'] = '$synergy%';
+      member['fav'] = theirs.isEmpty ? '—' : '${theirs.first['type'] ?? '—'}';
+      member['statsLoaded'] = true;
+    });
+  }
+
+  static Set<DateTime> _activeDays(List<Map<String, dynamic>> activities) =>
+      activities
+          .map((a) => DateTime.tryParse('${a['createdAt'] ?? ''}')?.toLocal())
+          .whereType<DateTime>()
+          .map((d) => DateTime(d.year, d.month, d.day))
+          .toSet();
+
+  static int _streakFrom(Set<DateTime> days) {
+    if (days.isEmpty) return 0;
+    final now = DateTime.now();
+    var cursor = DateTime(now.year, now.month, now.day);
+    if (!days.contains(cursor)) {
+      cursor = cursor.subtract(const Duration(days: 1));
+      if (!days.contains(cursor)) return 0;
+    }
+    var streak = 0;
+    while (days.contains(cursor)) {
+      streak++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    return streak;
+  }
+
+  static const Map<String, IconData> _activityIcons = {
+    'run': Icons.directions_run_rounded,
+    'running': Icons.directions_run_rounded,
+    'cycling': Icons.directions_bike_rounded,
+    'ride': Icons.directions_bike_rounded,
+    'walking': Icons.directions_walk_rounded,
+    'walk': Icons.directions_walk_rounded,
+    'swimming': Icons.pool_rounded,
+    'hike': Icons.hiking_rounded,
+  };
+
+  static const List<String> _monthLabels = [
+    'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',
+  ];
+
+  /// Maps an API clique session onto the card shape the tab renders.
+  Map<String, dynamic> _toActivityCard(Map<String, dynamic> session) {
+    final type = '${session['activityType'] ?? 'Running'}';
+    final participants = (session['participants'] as List?) ?? const [];
+    final scheduled =
+        DateTime.tryParse('${session['scheduledAt'] ?? ''}')?.toLocal() ??
+            DateTime.now();
+    final targetKm = (session['targetDistance'] as num?)?.toDouble() ?? 0;
+
+    // Live progress = furthest participant against the session target.
+    double bestMeters = 0;
+    for (final p in participants.whereType<Map>()) {
+      final d = (p['currentDistance'] as num?)?.toDouble() ?? 0;
+      if (d > bestMeters) bestMeters = d;
+    }
+    final coveredKm = bestMeters / 1000;
+    final hour12 = scheduled.hour % 12 == 0 ? 12 : scheduled.hour % 12;
+
+    return {
+      'id': '${session['id']}',
+      'title': '${session['title'] ?? 'Group activity'}',
+      'clique': '${session['meetingLocation'] ?? 'Fitrybe Clique'}',
+      'category': type,
+      'type': type,
+      'icon': _activityIcons[type.toLowerCase()] ?? Icons.fitness_center_rounded,
+      'progress': targetKm > 0 ? (coveredKm / targetKm).clamp(0.0, 1.0) : 0.0,
+      'progressText': targetKm > 0
+          ? '${coveredKm.toStringAsFixed(1)} / ${targetKm.toStringAsFixed(1)} KM'
+          : '${coveredKm.toStringAsFixed(1)} KM',
+      'participantsCount': participants.length,
+      'maxParticipants': participants.length,
+      'dateDay': '${scheduled.day}',
+      'dateMonth': _monthLabels[scheduled.month - 1],
+      'time':
+          '$hour12:${scheduled.minute.toString().padLeft(2, '0')} ${scheduled.hour < 12 ? 'AM' : 'PM'}',
+      'target': targetKm > 0
+          ? '${targetKm.toStringAsFixed(1)} KM Distance'
+          : '$type session',
+      'isParticipant': participants.whereType<Map>().any(
+          (p) => '${p['userId']}' == SessionService().userId),
+    };
   }
 
   @override
@@ -290,7 +351,20 @@ class _CliqueTabState extends State<CliqueTab>
           const SizedBox(height: 24),
 
           // Render No Activity State directly
-          if (_liveActivities.isEmpty && _upcomingActivities.isEmpty)
+          if (_isActivitiesLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 60),
+              child: LoadingStateView(),
+            )
+          else if (_activitiesError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: ErrorStateView(
+                message: _activitiesError!,
+                onRetry: _loadSessions,
+              ),
+            )
+          else if (_liveActivities.isEmpty && _upcomingActivities.isEmpty)
             _buildEmptyActivityState()
           else ...[
             if (_getFilteredLiveActivities().isNotEmpty) ...[
@@ -588,18 +662,20 @@ class _CliqueTabState extends State<CliqueTab>
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 HapticFeedback.heavyImpact();
-                Navigator.push(
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => CliqueLiveActivityScreen(
+                      sessionId: act['id'] as String?,
                       activityName: title,
                       activityType: actType,
                       activityIcon: icon,
                     ),
                   ),
                 );
+                _loadSessions();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: _accent,
@@ -647,8 +723,14 @@ class _CliqueTabState extends State<CliqueTab>
     final String dateMonth = act['dateMonth'] as String;
     final String time = act['time'] as String;
     final int pCount = act['participantsCount'] as int;
-    final bool isJoined = _joinedUpcomingIds.contains(id);
-    final int displayPCount = isJoined ? pCount + 1 : pCount;
+    // Membership comes from the server; the local set only covers joins made
+    // in this session before the list refreshes.
+    final bool isJoined =
+        act['isParticipant'] == true || _joinedUpcomingIds.contains(id);
+    final int displayPCount =
+        (act['isParticipant'] != true && _joinedUpcomingIds.contains(id))
+            ? pCount + 1
+            : pCount;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -734,12 +816,13 @@ class _CliqueTabState extends State<CliqueTab>
 
           // View Lobby / Join CTA
           GestureDetector(
-            onTap: () {
+            onTap: () async {
               HapticFeedback.lightImpact();
-              Navigator.push(
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => CliqueLiveActivityScreen(
+                    sessionId: id,
                     isUpcoming: true,
                     scheduledTime: '$dateMonth $dateDay, $time',
                     activityName: title,
@@ -748,6 +831,7 @@ class _CliqueTabState extends State<CliqueTab>
                   ),
                 ),
               );
+              _loadSessions();
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -799,342 +883,22 @@ class _CliqueTabState extends State<CliqueTab>
           ),
           const SizedBox(height: 20),
 
-          // Featured Card Banner
-          _buildFeaturedChallengeBanner(),
-          const SizedBox(height: 20),
-
-          // Active Section
-          Text(
-            'ACTIVE',
-            style: GoogleFonts.hankenGrotesk(
-              color: Colors.white38,
-              fontSize: 10.5,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.2,
-            ),
+          // Challenges are not part of the backend yet, so this stays an
+          // honest empty state instead of showing invented competitions.
+          EmptyStateView(
+            padding: const EdgeInsets.symmetric(vertical: 40),
+            icon: Icons.emoji_events_rounded,
+            title: 'No challenges yet',
+            message:
+                'Group challenges are coming soon. In the meantime, start a live Clique activity or chase your weekly goal.',
+            actionLabel: 'See live activities',
+            onAction: () {
+              HapticFeedback.selectionClick();
+              setState(() => _activeSegmentTab = 0);
+              widget.onSubTabChanged?.call(0);
+            },
           ),
-          const SizedBox(height: 12),
-
-          // Weekend Warrior Card
-          _buildActiveChallengeCard(),
           const SizedBox(height: 100),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFeaturedChallengeBanner() {
-    return Container(
-      height: 220,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(32),
-        image: const DecorationImage(
-          image: NetworkImage(
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuBxdHh6fP0l0pbtPDTac7da62bR5eiiOPAuqtwPq8-Scp6zmz7NUM2H_NF_VlUduH0Culz17A_AQ5W-62YHz__jLl2AUanMfkGB-E94ZxkgBiNXQ0hd0ujnn1pVQYkcpcR1QE57AQNaCqZb5OVD8I30ToY5Mrgogy2B0Ig611Yys-CwJVHK8_EGxji_LSa2fmBaz0X7RHu00V0mSObISBPjKNJF6B7RWQMqF0ymuIcB2_WZV8yzLkq-krq5urFqHNvTPrhMsnOjqZw',
-          ),
-          fit: BoxFit.cover,
-        ),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(32),
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.black26, Color(0xCC0F0F12)],
-          ),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.end,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Status & Count Row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _accent,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'FEATURED',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white,
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.group_rounded,
-                      color: Colors.white54,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '2450 Joined',
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white70,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            // Title
-            Text(
-              '30 Day Running Challenge 🏃',
-              style: GoogleFonts.hankenGrotesk(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Mini stats grid
-            Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.05),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'PROGRESS',
-                          style: GoogleFonts.hankenGrotesk(
-                            color: Colors.white38,
-                            fontSize: 8.5,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        RichText(
-                          text: TextSpan(
-                            style: GoogleFonts.anybody(
-                              color: _accent,
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                            children: [
-                              const TextSpan(text: '32 / 50 '),
-                              TextSpan(
-                                text: 'KM',
-                                style: GoogleFonts.hankenGrotesk(
-                                  color: Colors.white70,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.normal,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.05),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'YOUR RANK',
-                          style: GoogleFonts.hankenGrotesk(
-                            color: Colors.white38,
-                            fontSize: 8.5,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '#24',
-                          style: GoogleFonts.anybody(
-                            color: _accent,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActiveChallengeCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: _cardBg.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Title & Rank Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Weekend Warrior ⚔️',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white,
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.directions_walk_rounded,
-                        color: Colors.white38,
-                        size: 14,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '20,000 Steps',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Icon(
-                        Icons.calendar_today_rounded,
-                        color: Colors.white38,
-                        size: 12,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '3 Days Left',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    'CURRENT RANK',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white38,
-                      fontSize: 8.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '#102',
-                    style: GoogleFonts.anybody(
-                      color: _accent,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Progress line
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: 0.45,
-              minHeight: 5,
-              backgroundColor: Colors.white10,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                _accent.withValues(alpha: 0.6),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Continue CTA
-          SizedBox(
-            height: 44,
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () {
-                HapticFeedback.lightImpact();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    backgroundColor: _accent,
-                    content: Text(
-                      'Opening Weekend Warrior dashboard...',
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                );
-              },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _accent,
-                side: BorderSide(color: _accent.withValues(alpha: 0.3)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Text(
-                'Continue',
-                style: GoogleFonts.hankenGrotesk(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1165,21 +929,31 @@ class _CliqueTabState extends State<CliqueTab>
           ),
           const SizedBox(height: 32),
 
-          // Orbit Visualization Container
-          _buildOrbitView(),
-          const SizedBox(height: 24),
+          if (_orbitMembers.isEmpty)
+            EmptyStateView(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              icon: Icons.hub_rounded,
+              title: 'Your orbit is empty',
+              message:
+                  'Follow athletes from the Trybes tab and they will appear here, along with how often you train on the same days.',
+            )
+          else ...[
+            // Orbit Visualization Container
+            _buildOrbitView(),
+            const SizedBox(height: 24),
 
-          // Slide-up Details Container
-          AnimatedCrossFade(
-            duration: const Duration(milliseconds: 300),
-            firstCurve: Curves.easeInOut,
-            secondCurve: Curves.easeInOut,
-            crossFadeState: _selectedOrbitMember != null
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            firstChild: const SizedBox(height: 0),
-            secondChild: _buildSelectedMemberDetailsSheet(),
-          ),
+            // Slide-up Details Container
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 300),
+              firstCurve: Curves.easeInOut,
+              secondCurve: Curves.easeInOut,
+              crossFadeState: _selectedOrbitMember != null
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              firstChild: const SizedBox(height: 0),
+              secondChild: _buildSelectedMemberDetailsSheet(),
+            ),
+          ],
           const SizedBox(height: 100),
         ],
       ),
@@ -1384,6 +1158,9 @@ class _CliqueTabState extends State<CliqueTab>
                           _orbitRotation = (math.pi / 2) - baseAngle;
                         }
                       });
+                      if (_selectedOrbitMember != null) {
+                        _loadOrbitMemberStats(member);
+                      }
                     },
                     child: AnimatedOpacity(
                       opacity: isSelected ? 1.0 : (isAnySelected ? 0.35 : 1.0),
@@ -1392,18 +1169,17 @@ class _CliqueTabState extends State<CliqueTab>
                         scale: isSelected ? 1.25 : 1.0,
                         duration: const Duration(milliseconds: 300),
                         child: Container(
-                          width: 48,
-                          height: 48,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(
                               color: isSelected ? _accent : Colors.white10,
                               width: isSelected ? 2 : 1.5,
                             ),
-                            image: DecorationImage(
-                              image: NetworkImage(member['avatar'] as String),
-                              fit: BoxFit.cover,
-                            ),
+                          ),
+                          child: UserAvatar(
+                            url: member['avatar'] as String?,
+                            fallbackName: member['name'] as String?,
+                            radius: 24,
                           ),
                         ),
                       ),
@@ -1422,7 +1198,8 @@ class _CliqueTabState extends State<CliqueTab>
     if (_selectedOrbitMember == null) return const SizedBox(height: 0);
 
     final member = _selectedOrbitMember!;
-    final synergyNum = double.tryParse(member['synergy'].replaceAll('%', '')) ?? 80;
+    final synergyNum =
+        double.tryParse('${member['synergy'] ?? ''}'.replaceAll('%', '')) ?? 0;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1440,16 +1217,10 @@ class _CliqueTabState extends State<CliqueTab>
             children: [
               Row(
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      image: DecorationImage(
-                        image: NetworkImage(member['avatar'] as String),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                  UserAvatar(
+                    url: member['avatar'] as String?,
+                    fallbackName: member['name'] as String?,
+                    radius: 26,
                   ),
                   const SizedBox(width: 14),
                   Column(
@@ -1496,7 +1267,7 @@ class _CliqueTabState extends State<CliqueTab>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        member['synergy'] as String,
+                        '${member['synergy'] ?? '—'}',
                         style: GoogleFonts.anybody(
                           color: Colors.white,
                           fontSize: 12,
@@ -1522,15 +1293,15 @@ class _CliqueTabState extends State<CliqueTab>
           Row(
             children: [
               Expanded(
-                child: _buildSynergyStatBox('Activities', member['activities'] as String? ?? '24'),
+                child: _buildSynergyStatBox('Activities', '${member['activities'] ?? '—'}'),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _buildSynergyStatBox('Distance', member['dist']),
+                child: _buildSynergyStatBox('Distance', '${member['dist'] ?? '—'}'),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _buildSynergyStatBox('Streak', member['streak']),
+                child: _buildSynergyStatBox('Streak', '${member['streak'] ?? '—'}'),
               ),
             ],
           ),

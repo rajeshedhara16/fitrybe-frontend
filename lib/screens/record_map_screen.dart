@@ -9,6 +9,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'subscription_screen.dart';
+import '../services/api_service.dart';
+import '../services/achievement_service.dart';
 
 class RecordMapScreen extends StatefulWidget {
   static const routeName = '/RecordMapScreen';
@@ -231,15 +233,25 @@ class _RecordMapScreenState extends State<RecordMapScreen>
     HapticFeedback.heavyImpact();
     _positionStreamSub?.cancel();
     _positionStreamSub = null;
-    if (_isRecording && _elapsedSeconds >= 3) {
+
+    final shouldSave = _isRecording && _elapsedSeconds >= 3;
+    final durationSeconds = _elapsedSeconds;
+    final distanceKm = _activeDistance;
+    final calories = _activeCalories;
+    // Snapshot the traced route before the map is reset.
+    final route = _routeLatLngs
+        .map((p) => {'lat': p.latitude, 'lng': p.longitude})
+        .toList();
+
+    if (shouldSave) {
       _activityLogs.insert(
         0,
         _ActivityLog(
           activityName: _selectedActivityName,
           activityIcon: _selectedActivityIcon,
-          duration: _elapsedSeconds,
-          distanceKm: _activeDistance,
-          calories: _activeCalories,
+          duration: durationSeconds,
+          distanceKm: distanceKm,
+          calories: calories,
           avgHeartRate: _activeHeartRate,
           timestamp: DateTime.now(),
         ),
@@ -258,6 +270,50 @@ class _RecordMapScreenState extends State<RecordMapScreen>
         _routeLatLngs.add(_realUserLatLng!);
       }
     });
+
+    if (shouldSave) {
+      _persistActivity(
+        durationSeconds: durationSeconds,
+        distanceKm: distanceKm,
+        calories: calories,
+        route: route,
+      );
+    }
+  }
+
+  /// Saves the GPS workout, including its traced route, to the backend.
+  Future<void> _persistActivity({
+    required int durationSeconds,
+    required double distanceKm,
+    required int calories,
+    required List<Map<String, double>> route,
+  }) async {
+    try {
+      await ApiService.logActivity({
+        'title': _selectedActivityName,
+        'type': _selectedActivityName,
+        'duration': durationSeconds,
+        'distance': distanceKm * 1000,
+        'calories': calories,
+        if (distanceKm > 0) 'avgPace': (durationSeconds / 60) / distanceKm,
+        if (route.isNotEmpty) 'routeData': route,
+      });
+      AchievementService().sync();
+    } catch (e) {
+      debugPrint('Save GPS activity error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Workout could not sync. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
   }
 
 

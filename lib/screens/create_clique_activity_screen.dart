@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../widgets/user_avatar.dart';
 
 class CreateCliqueActivityScreen extends StatefulWidget {
   const CreateCliqueActivityScreen({super.key});
@@ -53,28 +56,8 @@ class _CreateCliqueActivityScreenState
   final List<String> _goalTypes = ['Distance', 'Duration', 'Calories', 'Steps'];
   final List<String> _goalUnits = ['km', 'min', 'kcal', 'steps'];
 
-  final List<Map<String, String>> _selectedMembers = [
-    {
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuAhuan_9XDiLjk_DLAjsoiXsObZdg1XuOCm058HttWKateqbt9N7G0pbaUteIwR1gRhEah1bvRME8DuvjYOYwCPGDerNdxvcdgM846c1TD3-rehVMAJYVULf4HxyhRlP_Z_-1HWHv_2waIrSsAmbU46yU8rIpxxWndxcPyf6iBvjGgHGhHg3uNmwnHa9eu6FY93UiHqis-Hu0xkS5nW6AHd_CGiSqxFzFH0ZqXMUF0XRxFYH-8dPwIQ',
-      'name': 'Alex'
-    },
-    {
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuB_Tea3Dd8fZEwZwVBX6nlcLDGnZQEavh5VH22dcwrj5GtBWQjd4eVjGiiN78-seFzH33qRU4M9Ua5tdVkCRucCPndKPmTbpXp1ZvlwZXzJBH2xEDDOXhrp7qxBO2O7C0RFUyKE5VSSmoqiBQsHNyYokCS1JNfUiCUMcddTCknNmjinzT21tgWB56sIj9-3YKag19ufFUolU9CCJN1dnIDTJytZ3Nl6xyQDYyTWeX-hCs860KeZi054',
-      'name': 'Marcus'
-    },
-    {
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuClOU2R-5Ojc_Q8zmrm27jSg2B_MK73_iyrnEWjkPIsCf9qhmtXPnyLfJIgWg4QjehQnjQD_ey2vrAYvcDQjDpdZtBo7fhsKX6KIK6T54EuCuBzn4B-0rQsT-hLewZC1uE2KUa8rmyffTjtzcDsJe-RQ2OqyDf_KIr5lC0cnqE8uta4flrGT_pLqS37tHdWbiHTNP_685LyRsiVscEMwN7mrQQOfvJSTZpbNpLVWYRYUwwZ9WV3gpKb',
-      'name': 'Elena'
-    },
-    {
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuAb9qLws6gGOMcLXhqWX_HP-ZjWPaMgKY4czECds1gHD2zxD0ptmL-v00Z0U4WjkPWKDHynOd5DZnA0PvoBWpJ6wGUU87n0ylPMUaL7YUoa19SPuFbEnA74DC7-QtuUgWSTPYHLMRss6YJ97_29HHMOVujHg1QvQqJIzHwC2I9t2DtnEIiRfFh5hkfQZWYu54dAeWhzu9Bb71XymS4DYwJ12inMp6qMTOIBDH9GkKmmslH4CukXlkhe',
-      'name': 'Sarah'
-    },
-  ];
+  /// Athletes chosen to invite when the session is created.
+  final List<Map<String, dynamic>> _selectedMembers = [];
 
   @override
   void initState() {
@@ -94,6 +77,88 @@ class _CreateCliqueActivityScreenState
     _searchController.dispose();
     _goalController.dispose();
     super.dispose();
+  }
+
+  bool _isCreating = false;
+
+  /// Creates the session on the server, invites the selected friends, then
+  /// opens its live screen.
+  Future<void> _createSession() async {
+    if (_isCreating) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _isCreating = true);
+
+    final goalType = _goalTypes[_selectedGoalType];
+    final goalValue = double.tryParse(_goalController.text) ?? 5.0;
+    final goalUnit = _goalUnits[_selectedGoalType];
+    final activityType =
+        _activityTypes[_selectedActivityType]['label'] as String;
+    final scheduledAt = _isScheduled
+        ? DateTime(
+            _selectedDate.year,
+            _selectedDate.month,
+            _selectedDate.day,
+            _selectedTime.hour,
+            _selectedTime.minute,
+          )
+        : DateTime.now();
+
+    try {
+      final session = await ApiService.createClique({
+        'title': _previewName,
+        'activityType': activityType,
+        'scheduledAt': scheduledAt.toIso8601String(),
+        // The API tracks distance targets in kilometres.
+        if (goalType == 'Distance') 'targetDistance': goalValue,
+        if (goalType == 'Duration') 'targetDuration': (goalValue * 60).round(),
+      });
+
+      final sessionId = session?['id'] as String?;
+      if (sessionId != null) {
+        for (final member in _selectedMembers) {
+          final userId = member['id'] as String?;
+          if (userId != null) {
+            await ApiService.inviteToClique(sessionId, userId);
+          }
+        }
+      }
+
+      if (!mounted) return;
+      setState(() => _isCreating = false);
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CliqueLiveActivityScreen(
+            sessionId: sessionId,
+            isUpcoming: _isScheduled,
+            scheduledTime: _isScheduled
+                ? '${_formatDate(_selectedDate)}, ${_selectedTime.format(context)}'
+                : 'Today',
+            activityName: _previewName,
+            activityType: activityType,
+            activityIcon:
+                _activityTypes[_selectedActivityType]['icon'] as IconData,
+            goalType: goalType,
+            goalValue: goalValue,
+            goalUnit: goalUnit,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isCreating = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not create this session. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
   }
 
   String get _previewName =>
@@ -150,43 +215,22 @@ class _CreateCliqueActivityScreenState
                 ),
                 actions: [
                   TextButton(
-                    onPressed: () {
-                      HapticFeedback.mediumImpact();
-                      final String scheduledTime = _isScheduled
-                          ? '${_formatDate(_selectedDate)}, ${_selectedTime.format(context)}'
-                          : 'Today, 7:30 PM';
-                      final String goalType = _goalTypes[_selectedGoalType];
-                      final double goalValue =
-                          double.tryParse(_goalController.text) ?? 5.0;
-                      final String goalUnit = _goalUnits[_selectedGoalType];
-
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => CliqueLiveActivityScreen(
-                            isUpcoming: _isScheduled,
-                            scheduledTime: scheduledTime,
-                            activityName: _previewName,
-                            activityType:
-                                _activityTypes[_selectedActivityType]['label']
-                                    as String,
-                            activityIcon: _activityTypes[_selectedActivityType]
-                                ['icon'] as IconData,
-                            goalType: goalType,
-                            goalValue: goalValue,
-                            goalUnit: goalUnit,
+                    onPressed: _isCreating ? null : _createSession,
+                    child: _isCreating
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: _accent),
+                          )
+                        : Text(
+                            'Create',
+                            style: GoogleFonts.hankenGrotesk(
+                              color: _accent,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                    child: Text(
-                      'Create',
-                      style: GoogleFonts.hankenGrotesk(
-                        color: _accent,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
                   ),
                   const SizedBox(width: 8),
                 ],
@@ -920,13 +964,10 @@ class _CreateCliqueActivityScreenState
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    ClipOval(
-                      child: Image.network(
-                        m['avatar']!,
-                        width: 56,
-                        height: 56,
-                        fit: BoxFit.cover,
-                      ),
+                    UserAvatar(
+                      url: m['avatar'] as String?,
+                      fallbackName: m['name'] as String?,
+                      radius: 28,
                     ),
                     Positioned(
                       top: -2,
@@ -978,50 +1019,8 @@ class _CreateCliqueActivityScreenState
     final TextEditingController friendSearchController =
         TextEditingController();
 
-    final List<Map<String, String>> allFriends = [
-      {
-        'name': 'Alex',
-        'subtitle': '@alex.run • Marathoner',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuAhuan_9XDiLjk_DLAjsoiXsObZdg1XuOCm058HttWKateqbt9N7G0pbaUteIwR1gRhEah1bvRME8DuvjYOYwCPGDerNdxvcdgM846c1TD3-rehVMAJYVULf4HxyhRlP_Z_-1HWHv_2waIrSsAmbU46yU8rIpxxWndxcPyf6iBvjGgHGhHg3uNmwnHa9eu6FY93UiHqis-Hu0xkS5nW6AHd_CGiSqxFzFH0ZqXMUF0XRxFYH-8dPwIQ'
-      },
-      {
-        'name': 'Marcus',
-        'subtitle': '@marcus.c • Cyclist',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuB_Tea3Dd8fZEwZwVBX6nlcLDGnZQEavh5VH22dcwrj5GtBWQjd4eVjGiiN78-seFzH33qRU4M9Ua5tdVkCRucCPndKPmTbpXp1ZvlwZXzJBH2xEDDOXhrp7qxBO2O7C0RFUyKE5VSSmoqiBQsHNyYokCS1JNfUiCUMcddTCknNmjinzT21tgWB56sIj9-3YKag19ufFUolU9CCJN1dnIDTJytZ3Nl6xyQDYyTWeX-hCs860KeZi054'
-      },
-      {
-        'name': 'Elena',
-        'subtitle': '@elena.f • Trail Runner',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuClOU2R-5Ojc_Q8zmrm27jSg2B_MK73_iyrnEWjkPIsCf9qhmtXPnyLfJIgWg4QjehQnjQD_ey2vrAYvcDQjDpdZtBo7fhsKX6KIK6T54EuCuBzn4B-0rQsT-hLewZC1uE2KUa8rmyffTjtzcDsJe-RQ2OqyDf_KIr5lC0cnqE8uta4flrGT_pLqS37tHdWbiHTNP_685LyRsiVscEMwN7mrQQOfvJSTZpbNpLVWYRYUwwZ9WV3gpKb'
-      },
-      {
-        'name': 'Sarah',
-        'subtitle': '@sarah.j • Power Lifter',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuAb9qLws6gGOMcLXhqWX_HP-ZjWPaMgKY4czECds1gHD2zxD0ptmL-v00Z0U4WjkPWKDHynOd5DZnA0PvoBWpJ6wGUU87n0ylPMUaL7YUoa19SPuFbEnA74DC7-QtuUgWSTPYHLMRss6YJ97_29HHMOVujHg1QvQqJIzHwC2I9t2DtnEIiRfFh5hkfQZWYu54dAeWhzu9Bb71XymS4DYwJ12inMp6qMTOIBDH9GkKmmslH4CukXlkhe'
-      },
-      {
-        'name': 'David Kim',
-        'subtitle': '@davidk • Swimmer',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuA6WB0sfMAaFfo5F_dwIad6ZGs7ulSBob3FMmrDmhtOJzchQRO1kQ477arp3E_zqR1e2HRU4O9zPR6NulCUQptJRJL0L1KYYDH5oPi92uqu8QsqUw-8xM09asGESGFKFyWIvWKw1Nl41cSnNhPABCmfjR6-XsgdajoAlsmMS8XGD13wiRcs-ayK0jhokb9QShfCCCYpwxgnKyz27HxCLrn5LXsL65kly2HvBKh8-o7-1dMd4-7UWF2HIklx4QomICGvKy6NbcwPmwo'
-      },
-      {
-        'name': 'Maya Patel',
-        'subtitle': '@mayap • Yoga Enthusiast',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuDAP1fzvajosGDCVTnUyqq4353TwT5L9hbdzIAbfVjL23jJvqwjbbg9OEdJD3tgrwrmFKd9QBHpnh_P_TAreUaxMF87aHQGluoDMjKAIMNydXCSFOz7NoDC-C0qQ0PAQytcLv3yf-_Ht2YrCPaoIeHWLOjIWHct32nVuTRlVDle0tfc8u70qmwS3nvQ6yfc3tpX2A_w0nrzZOlzqFt3ArMcMGIp3JUD66upNfTKxZBZ-Dwvs3Mtpy1CCuj2LRYp3YM6QZk5MMqMx2A'
-      },
-      {
-        'name': 'Chris Vance',
-        'subtitle': '@chris.v • Crossfit',
-        'avatar':
-            'https://lh3.googleusercontent.com/aida-public/AB6AXuBWx5umQiyz5zTsO2R59sz6-ZJBoCs_nZs85WNJFvHFAXTu2QdPMQAnLFwnsOjJEqaKcAdcpv9qPq6NQlJV7p3SyDX5EIVrn0bEU9-AP4_8x_xEUVHdOiDAP3wLWp-IHQa66Tlzzu2-LDvsB2lxqL53shYINDqc8cVbqVZ_A5LMSmdfU-nToulwi9Fj81mCD9UTzqkJlubLx5AcUiLKC8JqNPOE2QnZ7YAtQXOmHziYWkiMpbPMGmnYNiBMEoC970DEuzYd659rK9k'
-      },
-    ];
+    List<Map<String, dynamic>> allFriends = [];
+    bool friendsLoading = true;
 
     showModalBottomSheet(
       context: context,
@@ -1030,10 +1029,30 @@ class _CreateCliqueActivityScreenState
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
+            // Load the athletes this user follows the first time the sheet
+            // is laid out.
+            if (friendsLoading) {
+              final myId = SessionService().userId;
+              if (myId == null) {
+                friendsLoading = false;
+              } else {
+                ApiService.getFollowing(myId).then((following) {
+                  allFriends = following;
+                  friendsLoading = false;
+                  setModalState(() {});
+                }).catchError((_) {
+                  friendsLoading = false;
+                  setModalState(() {});
+                });
+              }
+            }
+
             final String query = friendSearchController.text.toLowerCase();
             final filteredFriends = allFriends.where((f) {
-              return f['name']!.toLowerCase().contains(query) ||
-                  f['subtitle']!.toLowerCase().contains(query);
+              final name =
+                  '${f['firstName'] ?? ''} ${f['lastName'] ?? ''}'.toLowerCase();
+              final location = '${f['location'] ?? ''}'.toLowerCase();
+              return name.contains(query) || location.contains(query);
             }).toList();
 
             return Container(
@@ -1123,22 +1142,27 @@ class _CreateCliqueActivityScreenState
                           color: Colors.white.withValues(alpha: 0.05)),
                       itemBuilder: (context, i) {
                         final friend = filteredFriends[i];
-                        final bool isSelected = _selectedMembers
-                            .any((m) => m['name'] == friend['name']);
+                        final friendId = friend['id'] as String?;
+                        final rawName =
+                            '${friend['firstName'] ?? ''} ${friend['lastName'] ?? ''}'
+                                .trim();
+                        final friendName =
+                            rawName.isEmpty ? 'Athlete' : rawName;
+                        final friendAvatar =
+                            ApiService.media(friend['avatarUrl'] as String?);
+                        final bool isSelected =
+                            _selectedMembers.any((m) => m['id'] == friendId);
 
                         return ListTile(
                           contentPadding:
                               const EdgeInsets.symmetric(vertical: 4),
-                          leading: ClipOval(
-                            child: Image.network(
-                              friend['avatar']!,
-                              width: 44,
-                              height: 44,
-                              fit: BoxFit.cover,
-                            ),
+                          leading: UserAvatar(
+                            url: friendAvatar,
+                            fallbackName: friendName,
+                            radius: 22,
                           ),
                           title: Text(
-                            friend['name']!,
+                            friendName,
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white,
                               fontSize: 15,
@@ -1146,7 +1170,7 @@ class _CreateCliqueActivityScreenState
                             ),
                           ),
                           subtitle: Text(
-                            friend['subtitle']!,
+                            '${friend['location'] ?? 'Fitrybe athlete'}',
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white54,
                               fontSize: 12,
@@ -1157,12 +1181,13 @@ class _CreateCliqueActivityScreenState
                               HapticFeedback.lightImpact();
                               setState(() {
                                 if (isSelected) {
-                                  _selectedMembers.removeWhere(
-                                      (m) => m['name'] == friend['name']);
+                                  _selectedMembers
+                                      .removeWhere((m) => m['id'] == friendId);
                                 } else {
                                   _selectedMembers.add({
-                                    'name': friend['name']!,
-                                    'avatar': friend['avatar']!,
+                                    'id': friendId,
+                                    'name': friendName,
+                                    'avatar': friendAvatar,
                                   });
                                 }
                               });

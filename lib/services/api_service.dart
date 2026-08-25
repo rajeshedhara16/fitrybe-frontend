@@ -303,6 +303,12 @@ class ApiService {
     return _listOf(res, 'posts');
   }
 
+  static Future<bool> inviteToTrybe(String trybeId, String userId) async {
+    final res = await _client
+        .post('/trybes/$trybeId/invite', body: {'userId': userId});
+    return res.statusCode < 300;
+  }
+
   static Future<bool> setTrybeMembership(String trybeId, bool join) async {
     final res = join
         ? await _client.post('/trybes/$trybeId/join')
@@ -336,6 +342,12 @@ class ApiService {
 
   static Future<bool> leaveClique(String sessionId) async {
     final res = await _client.post('/cliques/$sessionId/leave');
+    return res.statusCode < 300;
+  }
+
+  static Future<bool> inviteToClique(String sessionId, String userId) async {
+    final res = await _client
+        .post('/cliques/$sessionId/invite', body: {'userId': userId});
     return res.statusCode < 300;
   }
 

@@ -48,6 +48,31 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
     // Default values for [Distance, Duration, Calories, Sessions]
     _metricTargets = [50, 45, 500, 4];
     _targetTextCtrl = TextEditingController(text: '${_metricTargets[_selectedMetricIndex]}');
+    _loadExistingGoal();
+  }
+
+  /// Pre-fills the form with the athlete's saved goal so this screen edits
+  /// rather than always starting from defaults.
+  Future<void> _loadExistingGoal() async {
+    final payload = await ApiService.getGoals();
+    final goal = payload['goal'];
+    if (goal is! Map || !mounted) return;
+
+    final activityIndex = _carouselActivities
+        .indexWhere((a) => a['name'] == '${goal['activity'] ?? ''}');
+    final metricIndex = _metrics.indexOf('${goal['metric'] ?? ''}');
+    final frequencyIndex = _frequencies.indexOf('${goal['frequency'] ?? ''}');
+    final target = (goal['targetValue'] as num?)?.round();
+
+    setState(() {
+      if (activityIndex >= 0) _selectedActivityIndex = activityIndex;
+      if (metricIndex >= 0) _selectedMetricIndex = metricIndex;
+      if (frequencyIndex >= 0) _selectedFrequencyIndex = frequencyIndex;
+      if (target != null && metricIndex >= 0) {
+        _metricTargets[metricIndex] = target;
+      }
+      _targetTextCtrl.text = '${_metricTargets[_selectedMetricIndex]}';
+    });
   }
 
   @override
@@ -613,7 +638,22 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                     'frequency': selectedFrequency,
                     'period': selectedFrequency.toUpperCase(),
                   });
-                } catch (_) {}
+                } catch (e) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: _cardBg,
+                      content: Text(
+                        e is ApiException
+                            ? e.message
+                            : 'Could not save your goal. Check your connection.',
+                        style:
+                            GoogleFonts.hankenGrotesk(color: Colors.white70),
+                      ),
+                    ),
+                  );
+                  return;
+                }
 
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(

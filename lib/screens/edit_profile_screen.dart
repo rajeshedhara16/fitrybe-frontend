@@ -1,6 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../widgets/user_avatar.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -17,26 +22,106 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   // Profile fields controllers
   late TextEditingController _nameController;
   late TextEditingController _bioController;
+  late TextEditingController _locationController;
 
-  // Mock URLs matching ProfileTab
-  final String _bannerUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuB6TPeMuX0LW4ItpQWypk7_L5uUJEXStbcwTo0u6Qh2iiaJAnM_gvOKAwZHOjmQQrYYN3ryuR96W3O6yy0NClyBiDzgbW7GehFko-vrnjWLAvO_VeKAi-ixSqLJazJ2rsV7TnPyPq6GNsIRv0J7rXJg24hBRNgAAH5omJcCclVTJ1X7ODm1ZXjf8EqafkBDPwWz6P9rP61AW5nEe8yUMyOy6GEu8aN2Uh6B2l_2fK3GsYKCN4Mhu1rf';
-  final String _avatarUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuAHT0fSiT-tBM9-LHbHVlF65CZIgyCqn-DoDUSl05Y0gcWZ5GDqFvUrdutx26mNY5DtnE0ZpijRovfDxUuDLTu5hStbuDoEqMg95eZOlGU7rLLNjJ0EvPXvLs18QfqyMuOb-lgEkqg4Ybw2FlQVeIXwhwd8mUkP3SpCWEUMQnuUuHL2ac9TI_c2sG5wyicbvZ1rz7TuvQ74aVOFymH_WjY3EuexlU6cz0GhX0Kb_z1JbXHSiQhULIuH';
+  final ImagePicker _picker = ImagePicker();
+  bool _isSaving = false;
+  bool _isUploading = false;
+
+  String? get _bannerUrl => SessionService().bannerUrl;
+  String? get _avatarUrl => SessionService().avatarUrl;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: 'Alex Thorne');
-    _bioController = TextEditingController(
-        text: 'Pushing limits. Ultra-runner & Calisthenics enthusiast. Chasing the next PR.');
+    final user = SessionService().user;
+    final first = (user?['firstName'] as String?)?.trim() ?? '';
+    final last = (user?['lastName'] as String?)?.trim() ?? '';
+    _nameController = TextEditingController(text: '$first $last'.trim());
+    _bioController =
+        TextEditingController(text: (user?['bio'] as String?) ?? '');
+    _locationController =
+        TextEditingController(text: (user?['location'] as String?) ?? '');
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _bioController.dispose();
+    _locationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickAndUpload({required bool isAvatar}) async {
+    if (_isUploading) return;
+    HapticFeedback.lightImpact();
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1600,
+        maxHeight: 1600,
+      );
+      if (picked == null) return;
+
+      setState(() => _isUploading = true);
+      final updated = isAvatar
+          ? await ApiService.uploadAvatar(File(picked.path))
+          : await ApiService.uploadBanner(File(picked.path));
+      SessionService().update(updated);
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isUploading = false);
+      _toast(e is ApiException ? e.message : 'Could not upload that image.');
+    }
+  }
+
+  Future<void> _save() async {
+    if (_isSaving) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _isSaving = true);
+
+    // The API stores first/last separately; split on the first space.
+    final fullName = _nameController.text.trim();
+    final spaceIndex = fullName.indexOf(' ');
+    final firstName =
+        spaceIndex == -1 ? fullName : fullName.substring(0, spaceIndex);
+    final lastName =
+        spaceIndex == -1 ? '' : fullName.substring(spaceIndex + 1).trim();
+
+    try {
+      final updated = await ApiService.updateProfile({
+        if (firstName.isNotEmpty) 'firstName': firstName,
+        if (lastName.isNotEmpty) 'lastName': lastName,
+        'bio': _bioController.text.trim(),
+        'location': _locationController.text.trim(),
+      });
+      SessionService().update(updated);
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _toast('Profile updated successfully!', success: true);
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      _toast(e is ApiException ? e.message : 'Could not save your profile.');
+    }
+  }
+
+  void _toast(String message, {bool success = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: success ? _accent : _cardBg,
+        content: Text(
+          message,
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white,
+            fontWeight: success ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -61,30 +146,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              HapticFeedback.mediumImpact();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  backgroundColor: _accent,
-                  content: Text(
-                    'Profile settings updated successfully!',
+            onPressed: _isSaving ? null : _save,
+            child: _isSaving
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: _accent),
+                  )
+                : Text(
+                    'Save',
                     style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white,
+                      color: _accent,
                       fontWeight: FontWeight.bold,
+                      fontSize: 15,
                     ),
                   ),
-                ),
-              );
-              Navigator.pop(context);
-            },
-            child: Text(
-              'Save',
-              style: GoogleFonts.hankenGrotesk(
-                color: _accent,
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-              ),
-            ),
           ),
           const SizedBox(width: 8),
         ],
@@ -111,10 +188,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       children: [
                         Opacity(
                           opacity: 0.4,
-                          child: Image.network(
-                            _bannerUrl,
-                            fit: BoxFit.cover,
-                          ),
+                          child: _bannerUrl == null
+                              ? Container(
+                                  color: _accent.withValues(alpha: 0.35))
+                              : Image.network(
+                                  _bannerUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                      color: _accent.withValues(alpha: 0.35)),
+                                ),
                         ),
                         // Black overlay gradient
                         Container(
@@ -133,9 +215,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         // Camera overlay button for cover photo
                         Center(
                           child: GestureDetector(
-                            onTap: () {
-                              HapticFeedback.lightImpact();
-                            },
+                            onTap: () => _pickAndUpload(isAvatar: false),
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                               decoration: BoxDecoration(
@@ -172,21 +252,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       alignment: Alignment.center,
                       children: [
                         Container(
-                          width: 100,
-                          height: 100,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(color: _bg, width: 4),
-                            image: DecorationImage(
-                              image: NetworkImage(_avatarUrl),
-                              fit: BoxFit.cover,
-                            ),
+                          ),
+                          child: UserAvatar(
+                            url: _avatarUrl,
+                            fallbackName: SessionService().displayName,
+                            radius: 46,
                           ),
                         ),
                         GestureDetector(
-                          onTap: () {
-                            HapticFeedback.lightImpact();
-                          },
+                          onTap: () => _pickAndUpload(isAvatar: true),
                           child: Container(
                             width: 100,
                             height: 100,
@@ -196,11 +273,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               border: Border.all(color: _bg, width: 4),
                             ),
                             alignment: Alignment.center,
-                            child: const Icon(
-                              Icons.camera_alt_rounded,
-                              color: Colors.white,
-                              size: 24,
-                            ),
+                            child: _isUploading
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.camera_alt_rounded,
+                                    color: Colors.white,
+                                    size: 24,
+                                  ),
                           ),
                         ),
                       ],
@@ -227,6 +313,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     Icons.text_fields_rounded,
                     'Tell us about yourself...',
                     maxLines: 4,
+                  ),
+                  const SizedBox(height: 20),
+
+                  _buildLabel('Location'),
+                  _buildTextField(
+                    _locationController,
+                    Icons.location_on_outlined,
+                    'City, Country',
                   ),
                   const SizedBox(height: 40),
                 ],

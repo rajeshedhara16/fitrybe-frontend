@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/api_service.dart';
+import '../widgets/state_views.dart';
 
 enum _NotifType {
   kudos,
@@ -46,98 +48,108 @@ class NotificationsTab extends StatefulWidget {
 class _NotificationsTabState extends State<NotificationsTab> {
   final Color _accent = const Color(0xFFFF5722);
 
-  static const String _marcusUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuBgjRSNIhjmFhRP_8S3tuvi1UgLC68VGmAkh42cOH9VQliTiy7tCc6SthMMHXDQA4u5KVBjJbgUpMGDWngdIa0napfGh8KuaI2R7Vg5APFj_FuEPtSycFIZ0S48-A0mTSDF9pEM1B68-1eG3zJonxwSmwvmtIGw9-09xvJbXE20Bc3pv4KvyqQJNn1emw8tMbAY9KUjxJD_Lmjaw4Duenm3KPou27843mgzy-OF2cdC5p_ej4RvuGJAVUmHusIFbL2nb5sunZYAAqE';
-  static const String _elenaUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuDCQQabYLTohBmurAKr1RUN2IAmRiPuGsqFmInWzHEf__Aq8Lrup0DEecMWshiQqtOB1HAs-8fkX6PyMCEda_L3qGqU0Hd3pZ6C2Y99UPYmQjEvRzMX1Ola5UWClM-T51g-lXpPghN0dwlp7dEba8xTJJu76POnA9jCcIucHyiHs382ck93N92xzFSCg5Ed3_FxMZ4LfiX1hUbWrKGISFRwSRvCzC5BrI0mY3Ul_Hg9WbhgXrTKTFZULhLCg3sEkwFHYGol8j0dPoc';
-  static const String _gujUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuBWx5umQiyz5zTsO2R59sz6-ZJBoCs_nZs85WNJFvHFAXTu2QdPMQAnLFwnsOjJEqaKcAdcpv9qPq6NQlJV7p3SyDX5EIVrn0bEU9-AP4_8x_xEUVHdOiDAP3wLWp-IHQa66Tlzzu2-LDvsB2lxqL53shYINDqc8cVbqVZ_A5LMSmdfU-nToulwi9Fj81mCD9UTzqkJlubLx5AcUiLKC8JqNPOE2QnZ7YAtQXOmHziYWkiMpbPMGmnYNiBMEoC970DEuzYd659rK9k';
-  static const String _grxUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuD5xXoM82GHJSQNSl-JXZOu5g-UWak_YAKKVH81A7Pf5_ExAZcNb5DbW8GCumWsV-zMwHv3df74Lwq1T84Rv4lBZWo542IXaSkyYwXzvb8k8g_JPrPu1T53bWgYiW-AyaVdApEQgzXSpD478-4u-5NEbhYkbWboLJOGYNrPueRMJMQgJCb2G1RrKuTkG2RDaTaD4CU8k1_BBvmnX26awaaSmU5ageWKNr-9UQ_Joyp8XDp3nuGlhp_AMJzgltoEIZ4Cp2JFHzHIqug';
+  List<_NotificationItem> _today = [];
+  List<_NotificationItem> _yesterday = [];
+  List<_NotificationItem> _earlier = [];
+  bool _isLoading = true;
+  String? _error;
 
-  late final List<_NotificationItem> _today = [
-    _NotificationItem(
-      id: 't1',
-      type: _NotifType.kudos,
-      title: 'Marcus liked ur post',
-      subtitle: 'On your "Morning Run" activity',
-      time: '12m ago',
-      avatarUrl: _marcusUrl,
-    ),
-    _NotificationItem(
-      id: 't2',
-      type: _NotifType.comment,
-      title: 'Elena commented on your post',
-      subtitle: '"Let\'s crush this weekend 🔥"',
-      time: '45m ago',
-      avatarUrl: _elenaUrl,
-    ),
-    _NotificationItem(
-      id: 't3',
-      type: _NotifType.follow,
-      title: 'Guj followed you',
-      subtitle: 'Check out their profile',
-      time: '2h ago',
-      avatarUrl: _gujUrl,
-    ),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
-  late final List<_NotificationItem> _yesterday = [
-    _NotificationItem(
-      id: 'y1',
-      type: _NotifType.trybeInvite,
-      title: 'Marcus invited you to a Trybe',
-      subtitle: '"Daily Cardio Crew" · 24 members',
-      time: '1d ago',
-      avatarUrl: _marcusUrl,
-      actionable: true,
-    ),
-    _NotificationItem(
-      id: 'y2',
-      type: _NotifType.achievement,
-      title: 'You moved up in Weekend Warrior',
-      subtitle: 'Now ranked #98, up 14 places',
-      time: '1d ago',
-      isRead: true,
-    ),
-    _NotificationItem(
-      id: 'y3',
-      type: _NotifType.liveActivity,
-      title: '"Evening Walk" starts soon',
-      subtitle: 'Clique activity begins in 1 hour',
-      time: '1d ago',
-      isRead: true,
-    ),
-  ];
+  Future<void> _load() async {
+    if (mounted) setState(() => _error = null);
+    try {
+      final payload = await ApiService.getNotifications();
+      final raw = (payload['notifications'] as List?) ?? const [];
 
-  late final List<_NotificationItem> _earlier = [
-    _NotificationItem(
-      id: 'e1',
-      type: _NotifType.kudos,
-      title: 'Elena and 3 others liked your PR',
-      subtitle: 'Strength Training personal record',
-      time: '3d ago',
-      avatarUrl: _elenaUrl,
-      isRead: true,
-    ),
-    _NotificationItem(
-      id: 'e2',
-      type: _NotifType.badge,
-      title: 'New badge unlocked',
-      subtitle: 'You earned the "7-Day Streak" badge',
-      time: '5d ago',
-      isRead: true,
-    ),
-    _NotificationItem(
-      id: 'e3',
-      type: _NotifType.follow,
-      title: 'grxtvtb started following you',
-      subtitle: 'Check out their profile',
-      time: '6d ago',
-      avatarUrl: _grxUrl,
-      isRead: true,
-    ),
-  ];
+      final today = <_NotificationItem>[];
+      final yesterday = <_NotificationItem>[];
+      final earlier = <_NotificationItem>[];
+      final now = DateTime.now();
+      final startOfToday = DateTime(now.year, now.month, now.day);
+      final startOfYesterday = startOfToday.subtract(const Duration(days: 1));
+
+      for (final entry in raw.whereType<Map>()) {
+        final item = _toItem(Map<String, dynamic>.from(entry));
+        final created =
+            DateTime.tryParse('${entry['createdAt'] ?? ''}')?.toLocal();
+        if (created == null || created.isAfter(startOfToday)) {
+          today.add(item);
+        } else if (created.isAfter(startOfYesterday)) {
+          yesterday.add(item);
+        } else {
+          earlier.add(item);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _today = today;
+        _yesterday = yesterday;
+        _earlier = earlier;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Notifications load error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'We could not load your notifications.';
+      });
+    }
+  }
+
+  /// Maps an API notification onto the card model this screen renders.
+  _NotificationItem _toItem(Map<String, dynamic> raw) {
+    final actor = (raw['actor'] is Map)
+        ? Map<String, dynamic>.from(raw['actor'])
+        : const <String, dynamic>{};
+    final actorName =
+        '${actor['firstName'] ?? ''} ${actor['lastName'] ?? ''}'.trim();
+    final type = _typeFrom('${raw['type'] ?? ''}');
+
+    // The server stores the predicate ("liked your post."), so prefix the actor.
+    final body = '${raw['body'] ?? ''}';
+    final title = actorName.isEmpty
+        ? '${raw['title'] ?? 'Notification'}'
+        : '$actorName $body'.trim();
+
+    return _NotificationItem(
+      id: '${raw['id']}',
+      type: type,
+      title: title,
+      subtitle: actorName.isEmpty ? body : '${raw['title'] ?? ''}',
+      time: _relativeTime(raw['createdAt']),
+      avatarUrl: ApiService.media(actor['avatarUrl'] as String?),
+      isRead: raw['isRead'] == true,
+      actionable: type == _NotifType.trybeInvite,
+    );
+  }
+
+  static _NotifType _typeFrom(String apiType) => switch (apiType.toUpperCase()) {
+        'LIKE' => _NotifType.kudos,
+        'COMMENT' => _NotifType.comment,
+        'FOLLOW' => _NotifType.follow,
+        'TRYBE_INVITE' => _NotifType.trybeInvite,
+        'ACHIEVEMENT' => _NotifType.achievement,
+        'CLIQUE_INVITE' || 'CLIQUE_START' => _NotifType.liveActivity,
+        'BADGE' => _NotifType.badge,
+        _ => _NotifType.kudos,
+      };
+
+  static String _relativeTime(dynamic isoString) {
+    final parsed = DateTime.tryParse('${isoString ?? ''}');
+    if (parsed == null) return '';
+    final diff = DateTime.now().difference(parsed);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
 
   bool get _hasUnread => [
         ..._today,
@@ -145,18 +157,20 @@ class _NotificationsTabState extends State<NotificationsTab> {
         ..._earlier,
       ].any((n) => !n.isRead);
 
-  void _markAllRead() {
+  Future<void> _markAllRead() async {
     HapticFeedback.lightImpact();
     setState(() {
       for (final n in [..._today, ..._yesterday, ..._earlier]) {
         n.isRead = true;
       }
     });
+    await ApiService.markAllNotificationsRead();
   }
 
-  void _markRead(_NotificationItem item) {
+  Future<void> _markRead(_NotificationItem item) async {
     if (item.isRead) return;
     setState(() => item.isRead = true);
+    await ApiService.markNotificationRead(item.id);
   }
 
   void _resolveAction(_NotificationItem item, String resolution, String message) {
@@ -165,6 +179,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
       item.actionResolution = resolution;
       item.isRead = true;
     });
+    ApiService.markNotificationRead(item.id);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: _accent,
@@ -181,14 +196,24 @@ class _NotificationsTabState extends State<NotificationsTab> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) return const LoadingStateView();
+    if (_error != null) {
+      return ErrorStateView(message: _error!, onRetry: _load);
+    }
+
     final bool isEmpty = _today.isEmpty && _yesterday.isEmpty && _earlier.isEmpty;
 
     if (isEmpty) {
       return _buildEmptyState();
     }
 
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: _accent,
+      backgroundColor: const Color(0xFF1F1F22),
+      child: SingleChildScrollView(
+      physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics()),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20.0),
         child: Column(
@@ -217,6 +242,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
             const SizedBox(height: 100),
           ],
         ),
+      ),
       ),
     );
   }
