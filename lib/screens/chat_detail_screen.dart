@@ -4,11 +4,17 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../services/socket_service.dart';
+import '../widgets/state_views.dart';
+import '../widgets/user_avatar.dart';
 
 class ChatDetailScreen extends StatefulWidget {
+  /// Server conversation id.
   final String chatId;
   final String name;
-  final String avatar;
+  final String? avatar;
   final bool isTrybe;
   final bool isOnline;
 
@@ -16,7 +22,7 @@ class ChatDetailScreen extends StatefulWidget {
     super.key,
     required this.chatId,
     required this.name,
-    required this.avatar,
+    this.avatar,
     this.isTrybe = false,
     this.isOnline = false,
   });
@@ -34,53 +40,94 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
 
-  late List<Map<String, dynamic>> _messages;
+  List<Map<String, dynamic>> _messages = [];
+  bool _isLoading = true;
+  String? _error;
+  bool _isSending = false;
 
   @override
   void initState() {
     super.initState();
-    _messages = [
-      {
-        'id': 'm1',
-        'isMe': false,
-        'senderName': widget.name,
-        'text': 'Hey! Great run today! Are we meeting at Gandhi Maidan at 6:00 AM tomorrow?',
-        'time': '10:14 AM',
-        'type': 'text',
-      },
-      {
-        'id': 'm2',
-        'isMe': true,
-        'senderName': 'You',
-        'text': 'Yes absolutely! I will bring the new hydration strategy test plan.',
-        'time': '10:16 AM',
-        'type': 'text',
-      },
-      {
-        'id': 'm3',
-        'isMe': false,
-        'senderName': widget.name,
-        'type': 'workout',
-        'workoutTitle': 'Morning 10K Tempo Run',
-        'distance': '10.2 km',
-        'pace': '4:52 /km',
-        'timeStr': '49m 38s',
-        'calories': '680 kcal',
-        'time': '10:20 AM',
-      },
-      {
-        'id': 'm4',
-        'isMe': false,
-        'senderName': widget.name,
-        'text': 'Check out my tempo pace from yesterday! Setting a new PR for our Saturday group run.',
-        'time': '10:21 AM',
-        'type': 'text',
-      },
-    ];
+    _loadMessages();
+    _joinRealtimeRoom();
+  }
+
+  /// Subscribes to this conversation so messages from other participants
+  /// arrive without polling.
+  void _joinRealtimeRoom() {
+    final socket = SocketService();
+    socket.connect();
+    socket.emit('join_conversation', widget.chatId);
+    socket.on('chat:message', _onIncomingMessage);
+  }
+
+  void _onIncomingMessage(dynamic data) {
+    if (data is! Map) return;
+    final payload = Map<String, dynamic>.from(data);
+    if ('${payload['conversationId']}' != widget.chatId) return;
+    // Our own sends are appended optimistically already.
+    if ('${payload['senderId']}' == SessionService().userId) return;
+    if (!mounted) return;
+    setState(() => _messages.add(_normalize(payload)));
+    _scrollToBottom();
+  }
+
+  Future<void> _loadMessages() async {
+    if (mounted) setState(() => _error = null);
+    try {
+      final fetched = await ApiService.getMessages(widget.chatId);
+      if (!mounted) return;
+      setState(() {
+        _messages = fetched.map(_normalize).toList();
+        _isLoading = false;
+      });
+      _scrollToBottom();
+      // Clear the unread badge for this thread.
+      ApiService.markConversationRead(widget.chatId);
+    } catch (e) {
+      debugPrint('ChatDetail load error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'We could not load this conversation.';
+      });
+    }
+  }
+
+  /// Maps an API message onto the shape the bubble widgets expect.
+  Map<String, dynamic> _normalize(Map<String, dynamic> raw) {
+    final sender = (raw['sender'] is Map)
+        ? Map<String, dynamic>.from(raw['sender'])
+        : const <String, dynamic>{};
+    final senderId = '${raw['senderId'] ?? sender['id'] ?? ''}';
+    final name =
+        '${sender['firstName'] ?? ''} ${sender['lastName'] ?? ''}'.trim();
+    final mediaUrl = ApiService.media(raw['mediaUrl'] as String?);
+
+    return {
+      'id': '${raw['id'] ?? DateTime.now().microsecondsSinceEpoch}',
+      'isMe': senderId == SessionService().userId,
+      'senderName': name.isEmpty ? widget.name : name,
+      'text': '${raw['text'] ?? ''}',
+      'type': mediaUrl != null ? 'image' : 'text',
+      'mediaPath': mediaUrl,
+      'time': _formatTime(raw['createdAt']),
+    };
+  }
+
+  static String _formatTime(dynamic isoString) {
+    final parsed = DateTime.tryParse('${isoString ?? ''}')?.toLocal();
+    if (parsed == null) return '';
+    final hour12 = parsed.hour % 12 == 0 ? 12 : parsed.hour % 12;
+    final minute = parsed.minute.toString().padLeft(2, '0');
+    return '$hour12:$minute ${parsed.hour < 12 ? 'AM' : 'PM'}';
   }
 
   @override
   void dispose() {
+    SocketService()
+      ..off('chat:message')
+      ..emit('leave_conversation', widget.chatId);
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -98,32 +145,42 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
-  void _sendMessage({String text = '', String type = 'text', String? mediaPath}) {
+  Future<void> _sendMessage({String text = ''}) async {
     final msgText = text.trim();
-    if (msgText.isEmpty && type == 'text') return;
+    if (msgText.isEmpty || _isSending) return;
 
     HapticFeedback.lightImpact();
-    final now = DateTime.now();
-    final timeStr = '${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+    setState(() => _isSending = true);
+    _textController.clear();
+
+    final created = await ApiService.sendMessage(widget.chatId, msgText);
+    if (!mounted) return;
+
+    if (created == null) {
+      // Put the text back so the message is not silently lost.
+      _textController.text = msgText;
+      setState(() => _isSending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            'Message could not be sent. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
 
     setState(() {
-      _messages.add({
-        'id': DateTime.now().millisecondsSinceEpoch.toString(),
-        'isMe': true,
-        'senderName': 'You',
-        'text': msgText,
-        'type': type,
-        'mediaPath': mediaPath,
-        'time': timeStr,
-        'workoutTitle': type == 'workout' ? 'Morning 5K Workout' : null,
-        'distance': type == 'workout' ? '5.0 km' : null,
-        'pace': type == 'workout' ? '5:10 /km' : null,
-        'timeStr': type == 'workout' ? '25m 50s' : null,
-        'calories': type == 'workout' ? '340 kcal' : null,
-      });
+      _messages.add(_normalize(created));
+      _isSending = false;
     });
-
-    _textController.clear();
+    // Fan the message out to everyone else in the room.
+    SocketService().emit('chat:send', {
+      'conversationId': widget.chatId,
+      'text': msgText,
+    });
     _scrollToBottom();
   }
 
@@ -131,14 +188,33 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     try {
       final XFile? image = await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 800,
-        maxHeight: 800,
+        maxWidth: 1280,
+        maxHeight: 1280,
       );
-      if (image != null) {
-        _sendMessage(type: 'image', mediaPath: image.path);
+      if (image == null || _isSending) return;
+
+      setState(() => _isSending = true);
+      // Upload first, then send a message that references the stored file.
+      final url = await ApiService.uploadChatImage(File(image.path));
+      if (url == null) {
+        if (mounted) setState(() => _isSending = false);
+        return;
       }
+      final created = await ApiService.sendMessage(
+        widget.chatId,
+        _textController.text.trim(),
+        mediaUrl: url,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (created != null) _messages.add(_normalize(created));
+        _isSending = false;
+      });
+      _textController.clear();
+      _scrollToBottom();
     } catch (e) {
       debugPrint('Error attaching image: $e');
+      if (mounted) setState(() => _isSending = false);
     }
   }
 
@@ -158,9 +234,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ),
         title: Row(
           children: [
-            CircleAvatar(
+            UserAvatar(
+              url: widget.avatar,
+              fallbackName: widget.name,
               radius: 18,
-              backgroundImage: NetworkImage(widget.avatar),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -193,16 +270,29 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         children: [
           // Message Feed
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final msg = _messages[index];
-                return _buildMessageBubble(msg);
-              },
-            ),
+            child: _isLoading
+                ? const LoadingStateView()
+                : _error != null
+                    ? ErrorStateView(message: _error!, onRetry: _loadMessages)
+                    : _messages.isEmpty
+                        ? EmptyStateView(
+                            icon: Icons.chat_bubble_outline_rounded,
+                            title: 'No messages yet',
+                            message: widget.isTrybe
+                                ? 'Start the conversation with your Trybe.'
+                                : 'Say hello to ${widget.name}.',
+                          )
+                        : ListView.builder(
+                            controller: _scrollController,
+                            physics: const BouncingScrollPhysics(),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 16),
+                            itemCount: _messages.length,
+                            itemBuilder: (context, index) {
+                              final msg = _messages[index];
+                              return _buildMessageBubble(msg);
+                            },
+                          ),
           ),
 
           // Input Dock

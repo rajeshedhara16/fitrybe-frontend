@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'auth_screens.dart';
 import 'health_permission_screen.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
 
 /// A single selectable preference (an activity or a sport).
 class _PrefItem {
@@ -47,6 +49,10 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
   final TextEditingController dobController = TextEditingController();
 
   String selectedGender = '';
+
+  /// The picked date itself — `dobController` only holds its display text.
+  DateTime? _selectedDob;
+  bool _isSaving = false;
 
   final Set<String> selectedActivities = {};
   final Set<String> selectedSports = {};
@@ -159,13 +165,57 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
     );
   }
 
-  void _submitForm() {
+  /// Maps the gender card labels onto the backend's `Gender` enum.
+  String? get _genderEnum => switch (selectedGender.toLowerCase()) {
+        'male' => 'MALE',
+        'female' => 'FEMALE',
+        'other' => 'OTHER',
+        '' => null,
+        _ => 'PREFER_NOT_TO_SAY',
+      };
+
+  Future<void> _submitForm() async {
     FocusScope.of(context).unfocus();
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const HealthPermissionScreen(),
-      ),
-    );
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+
+    try {
+      final updated = await ApiService.updateProfile({
+        if (firstNameController.text.trim().isNotEmpty)
+          'firstName': firstNameController.text.trim(),
+        if (lastNameController.text.trim().isNotEmpty)
+          'lastName': lastNameController.text.trim(),
+        if (_selectedDob != null) 'dob': _selectedDob!.toIso8601String(),
+        if (_genderEnum != null) 'gender': _genderEnum,
+        'activityInterests': selectedActivities.toList(),
+        'sportInterests': selectedSports.toList(),
+        'onboardingCompleted': true,
+      });
+      SessionService().update(updated);
+
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const HealthPermissionScreen(),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not save your profile. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(),
+          ),
+          backgroundColor: const Color(0xFF2D2D2D),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _selectDate(BuildContext context) async {
@@ -207,6 +257,7 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
         'Dec',
       ];
       setState(() {
+        _selectedDob = picked;
         dobController.text =
             "${picked.day} ${monthNames[picked.month - 1]} ${picked.year}";
       });
@@ -1033,7 +1084,7 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: ready ? _submitForm : null,
+                onPressed: (ready && !_isSaving) ? _submitForm : null,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _accent,
                   foregroundColor: Colors.white,
@@ -1043,20 +1094,29 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 17),
                   shape: const StadiumBorder(),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Submit',
-                      style: GoogleFonts.hankenGrotesk(
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.bold,
+                child: _isSaving
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Submit',
+                            style: GoogleFonts.hankenGrotesk(
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward_rounded, size: 19),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Icon(Icons.arrow_forward_rounded, size: 19),
-                  ],
-                ),
               ),
             ),
           ],

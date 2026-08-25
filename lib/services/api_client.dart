@@ -4,6 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Thin HTTP layer over the Fitrybe backend.
+///
+/// Owns the base URL resolution, JWT storage, and automatic access-token
+/// refresh so the feature services can stay focused on payload shapes.
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
@@ -12,17 +16,34 @@ class ApiClient {
   static const String _tokenKey = 'fitrybe_access_token';
   static const String _refreshTokenKey = 'fitrybe_refresh_token';
 
-  // Base URL configuration (auto-detects platform for emulator vs desktop/local)
-  String get baseUrl {
-    if (kIsWeb) return 'http://localhost:4000/api';
-    if (Platform.isAndroid) return 'http://10.0.2.2:4000/api';
-    return 'http://localhost:4000/api';
-  }
+  /// Override at build time for physical devices / staging:
+  /// `flutter run --dart-define=FITRYBE_API_HOST=192.168.1.50`
+  static const String _hostOverride =
+      String.fromEnvironment('FITRYBE_API_HOST', defaultValue: '');
 
-  String get socketUrl {
+  /// Host origin (no `/api` suffix) — also used to resolve `/uploads/...` media.
+  String get origin {
+    if (_hostOverride.isNotEmpty) {
+      return _hostOverride.startsWith('http')
+          ? _hostOverride
+          : 'http://$_hostOverride:4000';
+    }
     if (kIsWeb) return 'http://localhost:4000';
+    // Android emulators reach the host machine's loopback via 10.0.2.2.
     if (Platform.isAndroid) return 'http://10.0.2.2:4000';
     return 'http://localhost:4000';
+  }
+
+  String get baseUrl => '$origin/api';
+
+  String get socketUrl => origin;
+
+  /// Turns a backend-relative upload path into an absolute URL.
+  /// Passes through absolute URLs (seed data uses remote image hosts).
+  String? resolveMediaUrl(String? path) {
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    return path.startsWith('/') ? '$origin$path' : '$origin/$path';
   }
 
   String? _accessToken;
@@ -64,108 +85,91 @@ class ApiClient {
     return map;
   }
 
-  Future<http.Response> get(String endpoint) async {
-    try {
-      final res = await http.get(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: _headers,
-      );
-      if (res.statusCode == 401 && _refreshToken != null) {
-        final refreshed = await refreshToken();
-        if (refreshed) {
-          return await http.get(
-            Uri.parse('$baseUrl$endpoint'),
-            headers: _headers,
-          );
-        }
+  Uri _uri(String endpoint) => Uri.parse('$baseUrl$endpoint');
+
+  /// Runs [send], and if the access token has expired, refreshes it once and
+  /// replays the request with the new credentials.
+  Future<http.Response> _withRefresh(
+    Future<http.Response> Function() send,
+  ) async {
+    final res = await send();
+    if (res.statusCode == 401 && _refreshToken != null) {
+      if (await refreshToken()) {
+        return send();
       }
-      return res;
-    } catch (e) {
-      debugPrint('ApiClient GET error: $e');
-      rethrow;
     }
+    return res;
   }
 
-  Future<http.Response> post(String endpoint, {Map<String, dynamic>? body}) async {
-    try {
-      final res = await http.post(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: _headers,
-        body: body != null ? jsonEncode(body) : null,
-      );
-      if (res.statusCode == 401 && _refreshToken != null) {
-        final refreshed = await refreshToken();
-        if (refreshed) {
-          return await http.post(
-            Uri.parse('$baseUrl$endpoint'),
+  Future<http.Response> get(String endpoint) =>
+      _withRefresh(() => http.get(_uri(endpoint), headers: _headers));
+
+  Future<http.Response> post(String endpoint, {Map<String, dynamic>? body}) =>
+      _withRefresh(() => http.post(
+            _uri(endpoint),
             headers: _headers,
             body: body != null ? jsonEncode(body) : null,
-          );
-        }
-      }
-      return res;
-    } catch (e) {
-      debugPrint('ApiClient POST error: $e');
-      rethrow;
-    }
-  }
+          ));
 
-  Future<http.Response> patch(String endpoint, {Map<String, dynamic>? body}) async {
-    try {
-      final res = await http.patch(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: _headers,
-        body: body != null ? jsonEncode(body) : null,
-      );
-      return res;
-    } catch (e) {
-      debugPrint('ApiClient PATCH error: $e');
-      rethrow;
-    }
-  }
+  Future<http.Response> put(String endpoint, {Map<String, dynamic>? body}) =>
+      _withRefresh(() => http.put(
+            _uri(endpoint),
+            headers: _headers,
+            body: body != null ? jsonEncode(body) : null,
+          ));
 
-  Future<http.Response> delete(String endpoint) async {
-    try {
-      final res = await http.delete(
-        Uri.parse('$baseUrl$endpoint'),
-        headers: _headers,
-      );
-      return res;
-    } catch (e) {
-      debugPrint('ApiClient DELETE error: $e');
-      rethrow;
-    }
-  }
+  Future<http.Response> patch(String endpoint, {Map<String, dynamic>? body}) =>
+      _withRefresh(() => http.patch(
+            _uri(endpoint),
+            headers: _headers,
+            body: body != null ? jsonEncode(body) : null,
+          ));
+
+  Future<http.Response> delete(String endpoint) =>
+      _withRefresh(() => http.delete(_uri(endpoint), headers: _headers));
 
   Future<http.Response> multipartPost(
     String endpoint, {
     Map<String, String>? fields,
     List<http.MultipartFile>? files,
   }) async {
-    try {
-      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$endpoint'));
+    // MultipartFile streams are single-use, so buffer them into bytes to allow
+    // the request to be rebuilt on a token refresh retry.
+    final buffered = <List<int>>[];
+    if (files != null) {
+      for (final f in files) {
+        buffered.add(await f.finalize().toBytes());
+      }
+    }
+
+    Future<http.Response> send() async {
+      final request = http.MultipartRequest('POST', _uri(endpoint));
       if (_accessToken != null && _accessToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_accessToken';
       }
-      if (fields != null) {
-        request.fields.addAll(fields);
-      }
+      if (fields != null) request.fields.addAll(fields);
       if (files != null) {
-        request.files.addAll(files);
+        for (var i = 0; i < files.length; i++) {
+          request.files.add(http.MultipartFile.fromBytes(
+            files[i].field,
+            buffered[i],
+            filename: files[i].filename,
+            contentType: files[i].contentType,
+          ));
+        }
       }
-      final streamedResponse = await request.send();
-      return await http.Response.fromStream(streamedResponse);
-    } catch (e) {
-      debugPrint('ApiClient Multipart error: $e');
-      rethrow;
+      final streamed = await request.send();
+      return http.Response.fromStream(streamed);
     }
+
+    return _withRefresh(send);
   }
 
   Future<bool> refreshToken() async {
     if (_refreshToken == null) return false;
     try {
       final res = await http.post(
-        Uri.parse('$baseUrl/auth/refresh'),
+        _uri('/auth/refresh'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'refreshToken': _refreshToken}),
       );
@@ -175,7 +179,7 @@ class ApiClient {
         return true;
       }
     } catch (e) {
-      debugPrint('ApiClient Token Refresh error: $e');
+      debugPrint('ApiClient token refresh error: $e');
     }
     await clearTokens();
     return false;

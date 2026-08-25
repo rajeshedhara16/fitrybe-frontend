@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'chat_detail_screen.dart';
+import '../services/api_service.dart';
+import '../widgets/state_views.dart';
+import '../widgets/user_avatar.dart';
 
 class MessagingScreen extends StatefulWidget {
   static const routeName = '/MessagingScreen';
@@ -24,69 +28,70 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
 
 
 
-  // Conversations List
-  final List<Map<String, dynamic>> _conversations = [
-    {
-      'id': 'c1',
-      'type': 'direct',
-      'name': 'Marcus Vane',
-      'sub': 'Patna, Bihar • Runner',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuBgjRSNIhjmFhRP_8S3tuvi1UgLC68VGmAkh42cOH9VQliTiy7tCc6SthMMHXDQA4u5KVBjJbgUpMGDWngdIa0napfGh8KuaI2R7Vg5APFj_FuEPtSycFIZ0S48-A0mTSDF9pEM1B68-1eG3zJonxwSmwvmtIGw9-09xvJbXE20Bc3pv4KvyqQJNn1emw8tMbAY9KUjxJD_Lmjaw4Duenm3KPou27843mgzy-OF2cdC5p_ej4RvuGJAVUmHusIFbL2nb5sunZYAAqE',
-      'lastMessage': 'Awesome pace on today’s morning 10K run! 🔥',
-      'time': '10m ago',
-      'unread': 2,
-      'isOnline': true,
-    },
-    {
-      'id': 'c2',
-      'type': 'trybe',
-      'name': 'Patna Striders 🏃‍♂️',
-      'sub': '1,240 members',
-      'avatar':
-          'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=400',
-      'lastMessage': 'Elena: Group meetup at Gandhi Maidan at 6:00 AM tomorrow!',
-      'time': '34m ago',
-      'unread': 5,
+  List<Map<String, dynamic>> _conversations = [];
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConversations();
+  }
+
+  Future<void> _loadConversations() async {
+    if (mounted) setState(() => _error = null);
+    try {
+      final fetched = await ApiService.getConversations();
+      if (!mounted) return;
+      setState(() {
+        _conversations = fetched.map(_normalizeConversation).toList();
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Messaging load error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'We could not load your messages.';
+      });
+    }
+  }
+
+  /// Flattens an API conversation into the row shape this list renders.
+  Map<String, dynamic> _normalizeConversation(Map<String, dynamic> raw) {
+    final last = (raw['lastMessage'] is Map)
+        ? Map<String, dynamic>.from(raw['lastMessage'])
+        : const <String, dynamic>{};
+    final isTrybe = '${raw['type']}'.toUpperCase() != 'DIRECT';
+    final senderName = '${last['senderName'] ?? ''}'.trim();
+    final text = '${last['text'] ?? ''}';
+
+    return {
+      'id': '${raw['id']}',
+      'type': isTrybe ? 'trybe' : 'direct',
+      'name': '${raw['title'] ?? (isTrybe ? 'Trybe chat' : 'Conversation')}',
+      'sub': isTrybe ? '${raw['membersCount'] ?? 0} members' : 'Direct message',
+      'avatar': ApiService.media(raw['avatarUrl'] as String?),
+      // Group threads prefix the sender so you can tell who spoke.
+      'lastMessage': text.isEmpty
+          ? 'No messages yet'
+          : (isTrybe && senderName.isNotEmpty ? '$senderName: $text' : text),
+      'time': _relativeTime(last['createdAt'] ?? raw['updatedAt']),
+      'unread': (raw['unreadCount'] as num?)?.toInt() ?? 0,
       'isOnline': false,
-    },
-    {
-      'id': 'c3',
-      'type': 'direct',
-      'name': 'Elena Forge',
-      'sub': 'Mumbai, India • Powerlifter',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDCQQabYLTohBmurAKr1RUN2IAmRiPuGsqFmInWzHEf__Aq8Lrup0DEecMWshiQqtOB1HAs-8fkX6PyMCEda_L3qGqU0Hd3pZ6C2Y99UPYmQjEvRzMX1Ola5UWClM-T51g-lXpPghN0dwlp7dEba8xTJJu76POnA9jCcIucHyiHs382ck93N92xzFSCg5Ed3_FxMZ4LfiX1hUbWrKGISFRwSRvCzC5BrI0mY3Ul_Hg9WbhgXrTKTFZULhLCg3sEkwFHYGol8j0dPoc',
-      'lastMessage': 'Sent you the new powerlifting workout routine 🏋️‍♀️',
-      'time': '2h ago',
-      'unread': 0,
-      'isOnline': true,
-    },
-    {
-      'id': 'c4',
-      'type': 'trybe',
-      'name': 'Elite Runners Trybe',
-      'sub': '842 members',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDegFaC4Ag757kCG6u-XWSSoEytMNfsVKTDGaGZBHQd6UtsdJChKNrtDWjc3XRP4UcT3rhD8XPQMdb6EtfCVLGT9vJhVkAW8rROvOhZqBxco1sl9-B7kfUq9Hpsc6ilJHL1woe80Qc6HgaSFdLqbL7dfm3na1Dqaa3Slr7TQZ-4HI-7Sv0VGNtY-omsZSrBLLVT6oCy4pW17ZCXuj_1rd8OvLc4YTnXPqPYKGcPZAZO45ztzq-ZnQ847Qouqq6Wfq3lsb-kofKqyXo',
-      'lastMessage': 'Sarah shared a workout: 15.2 km Interval Training',
-      'time': '4h ago',
-      'unread': 0,
-      'isOnline': false,
-    },
-    {
-      'id': 'c5',
-      'type': 'direct',
-      'name': 'Sarah Jenkins',
-      'sub': 'Patna, Bihar • Cyclist',
-      'avatar':
-          'https://lh3.googleusercontent.com/aida-public/AB6AXuDZEtQZ2pORiFgwS8V2nQO0E69YkI0Oqooc8KhFjmnTDLcYvyoMxeLVRixFQd9a_BBq9BG9nvLci8oAL92pScug74S9dIcF6fIRW_uznf2ED1ss6gtmVCpajslV1W_mEgVJh1D8_eaA_XdbpOEMbhFcQCVGihiYEC7dPpHMOjGWwHCmHkoW-cWIo84ku68eXpJYrAqDMoAjPaFHk6bpwduHgxoRYNvB-mMS4bFDxEbb2Qkf7hSAlA5mWF6P3WQVed2wLfpN7uSNFAg',
-      'lastMessage': 'Are we cycling towards Digha Ghat this weekend?',
-      'time': '1d ago',
-      'unread': 0,
-      'isOnline': true,
-    },
-  ];
+    };
+  }
+
+  static String _relativeTime(dynamic isoString) {
+    final parsed = DateTime.tryParse('${isoString ?? ''}');
+    if (parsed == null) return '';
+    final diff = DateTime.now().difference(parsed);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${(diff.inDays / 7).floor()}w ago';
+  }
 
   @override
   void dispose() {
@@ -94,20 +99,22 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
     super.dispose();
   }
 
-  void _openChat(Map<String, dynamic> chatData) {
+  Future<void> _openChat(Map<String, dynamic> chatData) async {
     HapticFeedback.lightImpact();
-    Navigator.push(
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ChatDetailScreen(
           chatId: chatData['id'],
           name: chatData['name'],
-          avatar: chatData['avatar'],
+          avatar: chatData['avatar'] as String?,
           isTrybe: chatData['type'] == 'trybe',
           isOnline: chatData['isOnline'] ?? false,
         ),
       ),
     );
+    // Refresh so read state and the last message line stay accurate.
+    _loadConversations();
   }
 
   void _showNewChatDialog() {
@@ -160,7 +167,7 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  _openChat(_conversations[0]);
+                  _showPeoplePicker();
                 },
               ),
               ListTile(
@@ -178,13 +185,248 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  _openChat(_conversations[1]);
+                  _showTrybePicker();
                 },
               ),
               const SizedBox(height: 12),
             ],
           ),
         );
+      },
+    );
+  }
+
+  /// Pick an athlete to start (or reopen) a direct conversation with.
+  void _showPeoplePicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetCtx) {
+        List<Map<String, dynamic>> people = [];
+        bool loading = true;
+        Timer? debounce;
+
+        return StatefulBuilder(builder: (ctx, setSheetState) {
+          if (loading) {
+            ApiService.searchUsers('', limit: 30).then((users) {
+              people = users;
+              loading = false;
+              setSheetState(() {});
+            }).catchError((_) {
+              loading = false;
+              setSheetState(() {});
+            });
+          }
+
+          return SizedBox(
+            height: MediaQuery.of(context).size.height * 0.7,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    onChanged: (val) {
+                      debounce?.cancel();
+                      debounce =
+                          Timer(const Duration(milliseconds: 350), () async {
+                        people = await ApiService.searchUsers(val.trim(), limit: 30);
+                        setSheetState(() {});
+                      });
+                    },
+                    style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white, fontSize: 14),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search_rounded,
+                          color: Colors.white38, size: 20),
+                      hintText: 'Search athletes...',
+                      hintStyle: GoogleFonts.hankenGrotesk(
+                          color: Colors.white30, fontSize: 13.5),
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: 0.05),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: loading
+                        ? const LoadingStateView()
+                        : people.isEmpty
+                            ? EmptyStateView(
+                                icon: Icons.person_search_rounded,
+                                title: 'No athletes found',
+                                message:
+                                    'Try a different name, or invite friends to Fitrybe.',
+                              )
+                            : ListView.builder(
+                                physics: const BouncingScrollPhysics(),
+                                itemCount: people.length,
+                                itemBuilder: (ctx, idx) {
+                                  final user = people[idx];
+                                  final name =
+                                      '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'
+                                          .trim();
+                                  final display = name.isEmpty
+                                      ? 'Fitrybe Athlete'
+                                      : name;
+                                  final avatar = ApiService.media(
+                                      user['avatarUrl'] as String?);
+
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: UserAvatar(
+                                        url: avatar,
+                                        fallbackName: display,
+                                        radius: 20),
+                                    title: Text(display,
+                                        style: GoogleFonts.hankenGrotesk(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w600)),
+                                    subtitle: Text(
+                                      '${user['location'] ?? 'Fitrybe community'}',
+                                      style: GoogleFonts.hankenGrotesk(
+                                          color: Colors.white38, fontSize: 12),
+                                    ),
+                                    onTap: () async {
+                                      final id = await ApiService
+                                          .createConversation(
+                                              userId: user['id'] as String?);
+                                      if (!mounted || id == null) return;
+                                      Navigator.pop(sheetCtx);
+                                      _openChat({
+                                        'id': id,
+                                        'name': display,
+                                        'avatar': avatar,
+                                        'type': 'direct',
+                                      });
+                                    },
+                                  );
+                                },
+                              ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  /// Pick one of the user's Trybes to open its group conversation.
+  void _showTrybePicker() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetCtx) {
+        List<Map<String, dynamic>> trybes = [];
+        bool loading = true;
+
+        return StatefulBuilder(builder: (ctx, setSheetState) {
+          if (loading) {
+            ApiService.getTrybes(mine: true).then((result) {
+              trybes = result;
+              loading = false;
+              setSheetState(() {});
+            }).catchError((_) {
+              loading = false;
+              setSheetState(() {});
+            });
+          }
+
+          return SizedBox(
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: loading
+                        ? const LoadingStateView()
+                        : trybes.isEmpty
+                            ? EmptyStateView(
+                                icon: Icons.groups_rounded,
+                                title: 'No Trybes yet',
+                                message:
+                                    'Join a Trybe from the Trybes tab to start a group chat.',
+                              )
+                            : ListView.builder(
+                                physics: const BouncingScrollPhysics(),
+                                itemCount: trybes.length,
+                                itemBuilder: (ctx, idx) {
+                                  final trybe = trybes[idx];
+                                  final name = '${trybe['name'] ?? 'Trybe'}';
+                                  final avatar = ApiService.media(
+                                      trybe['imageUrl'] as String?);
+
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    leading: UserAvatar(
+                                        url: avatar,
+                                        fallbackName: name,
+                                        radius: 20),
+                                    title: Text(name,
+                                        style: GoogleFonts.hankenGrotesk(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w600)),
+                                    subtitle: Text(
+                                      '${trybe['memberCount'] ?? 0} members',
+                                      style: GoogleFonts.hankenGrotesk(
+                                          color: Colors.white38, fontSize: 12),
+                                    ),
+                                    onTap: () async {
+                                      final id =
+                                          await ApiService.createConversation(
+                                              trybeId: trybe['id'] as String?);
+                                      if (!mounted || id == null) return;
+                                      Navigator.pop(sheetCtx);
+                                      _openChat({
+                                        'id': id,
+                                        'name': name,
+                                        'avatar': avatar,
+                                        'type': 'trybe',
+                                      });
+                                    },
+                                  );
+                                },
+                              ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        });
       },
     );
   }
@@ -302,19 +544,24 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
 
           // Conversations List
           Expanded(
-            child: filteredConversations.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.chat_bubble_outline_rounded, color: Colors.white24, size: 48),
-                        const SizedBox(height: 12),
-                        Text(
-                          'No conversations found',
-                          style: GoogleFonts.hankenGrotesk(color: Colors.white38, fontSize: 14),
-                        ),
-                      ],
-                    ),
+            child: _isLoading
+                ? const LoadingStateView()
+                : _error != null
+                    ? ErrorStateView(
+                        message: _error!, onRetry: _loadConversations)
+                    : filteredConversations.isEmpty
+                ? EmptyStateView(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    title: _conversations.isEmpty
+                        ? 'No conversations yet'
+                        : 'No conversations found',
+                    message: _conversations.isEmpty
+                        ? 'Start a chat with an athlete or one of your Trybes.'
+                        : 'Nothing matches your search or filter.',
+                    actionLabel:
+                        _conversations.isEmpty ? 'New message' : null,
+                    onAction:
+                        _conversations.isEmpty ? _showNewChatDialog : null,
                   )
                 : ListView.separated(
                     physics: const BouncingScrollPhysics(),
@@ -335,9 +582,10 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                           padding: const EdgeInsets.symmetric(vertical: 12.0),
                           child: Row(
                             children: [
-                              CircleAvatar(
+                              UserAvatar(
+                                url: item['avatar'] as String?,
+                                fallbackName: item['name'] as String?,
                                 radius: 24,
-                                backgroundImage: NetworkImage(item['avatar']),
                               ),
                               const SizedBox(width: 14),
                               Expanded(

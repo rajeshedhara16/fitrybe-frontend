@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/api_service.dart';
 
 class SubscriptionScreen extends StatefulWidget {
   static const routeName = '/SubscriptionScreen';
@@ -17,8 +18,13 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
   int _selectedPlanIndex = 0; // 0: Yearly (Best Value), 1: Monthly
 
-  void _onSubscribePressed() {
+  Future<void> _onSubscribePressed() async {
     HapticFeedback.heavyImpact();
+    final plan = _selectedPlanIndex == 0 ? 'ANNUAL' : 'MONTHLY';
+    try {
+      await ApiService.subscribe(plan);
+    } catch (_) {}
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/achievement_model.dart';
 import '../widgets/achievement_badge_widget.dart';
+import '../services/api_service.dart';
 
 class AchievementsScreen extends StatefulWidget {
   static const routeName = '/AchievementsScreen';
@@ -25,6 +26,13 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   void initState() {
     super.initState();
     AchievementBadgeArt.precache(AchievementData.badges.map((b) => b.id));
+    _syncServerAchievements();
+  }
+
+  Future<void> _syncServerAchievements() async {
+    try {
+      await ApiService.getAchievements();
+    } catch (_) {}
   }
 
   @override

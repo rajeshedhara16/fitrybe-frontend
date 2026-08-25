@@ -6,11 +6,17 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:share_plus/share_plus.dart';
 import 'chat_detail_screen.dart';
 import 'create_post_screen.dart';
-import '../services/trybe_service.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../widgets/state_views.dart';
+import '../widgets/user_avatar.dart';
 
 class TrybeDetailScreen extends StatefulWidget {
+  /// Server id for the Trybe. The screen still renders from the passed-in
+  /// summary while the full record loads.
+  final String? trybeId;
   final String title;
-  final String imageUrl;
+  final String? imageUrl;
   final String memberCount;
   final String category;
   final String location;
@@ -18,12 +24,13 @@ class TrybeDetailScreen extends StatefulWidget {
 
   const TrybeDetailScreen({
     super.key,
+    this.trybeId,
     required this.title,
-    required this.imageUrl,
-    this.memberCount = '1.2k members',
-    this.category = 'Running & Conditioning',
-    this.location = 'London, UK • Public',
-    this.isJoined = true,
+    this.imageUrl,
+    this.memberCount = '',
+    this.category = '',
+    this.location = '',
+    this.isJoined = false,
   });
 
   @override
@@ -39,42 +46,142 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
   late bool _isJoined;
   int _activeSubTab = 0; // 0: Feed, 1: Leaderboard, 2: Events, 3: Members
 
-  // Sample Trybe Feed Data
-  bool _hidePost1 = false;
-  bool _hidePost2 = false;
-  bool _post1Liked = false;
-  int _post1Likes = 84;
-  final List<Map<String, String>> _post1Comments = [
-    {'name': 'Marcus Chen', 'text': 'Sub-40 10k squad loading! 🔥', 'time': '1h ago'},
-    {'name': 'Elena Forge', 'text': 'See everyone Saturday 6 AM!', 'time': '3h ago'},
-  ];
+  Map<String, dynamic>? _trybe;
+  List<Map<String, dynamic>> _posts = [];
+  List<Map<String, dynamic>> _leaderboard = [];
+  List<Map<String, dynamic>> _members = [];
+  bool _isLoading = true;
+  String? _error;
+  bool _isTogglingJoin = false;
 
-  bool _post2Liked = true;
-  int _post2Likes = 142;
-  final List<Map<String, String>> _post2Comments = [
-    {'name': 'David Kim', 'text': 'Weekly goal smashed 💪', 'time': '2h ago'},
-  ];
-
-  // Events RSVP State
-  final Map<int, bool> _eventRsvp = {0: true, 1: false};
+  // Local overlays on top of server state for optimistic like/hide actions.
+  final Set<String> _likedPostIds = {};
+  final Map<String, int> _likeOverrides = {};
+  final Set<String> _hiddenPostIds = {};
 
   @override
   void initState() {
     super.initState();
     _isJoined = widget.isJoined;
+    _load();
   }
 
-  void _toggleJoin() {
-    HapticFeedback.heavyImpact();
-    final trybeId = widget.title.replaceAll(' ', '_');
-    if (!_isJoined) {
-      TrybeService().joinTrybe(trybeId);
-    } else {
-      TrybeService().leaveTrybe(trybeId);
+  Future<void> _load() async {
+    final id = widget.trybeId;
+    if (id == null) {
+      setState(() {
+        _isLoading = false;
+        _error = 'This Trybe is no longer available.';
+      });
+      return;
     }
+
+    if (mounted) setState(() => _error = null);
+    try {
+      final results = await Future.wait([
+        ApiService.getTrybe(id),
+        ApiService.getTrybePosts(id),
+        ApiService.getTrybeLeaderboard(id),
+        ApiService.getTrybeMembers(id),
+      ]);
+
+      if (!mounted) return;
+      final trybe = results[0] as Map<String, dynamic>?;
+      setState(() {
+        _trybe = trybe;
+        _posts = (results[1] as List<Map<String, dynamic>>)
+            .where((p) => !_hiddenPostIds.contains('${p['id']}'))
+            .toList();
+        _leaderboard = results[2] as List<Map<String, dynamic>>;
+        _members = results[3] as List<Map<String, dynamic>>;
+        _isJoined = trybe?['isMember'] == true;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('TrybeDetail load error: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = 'We could not load this Trybe.';
+      });
+    }
+  }
+
+  String get _displayTitle => '${_trybe?['name'] ?? widget.title}';
+
+  String? get _displayImage =>
+      ApiService.media(_trybe?['imageUrl'] as String?) ?? widget.imageUrl;
+
+  String get _displayCategory =>
+      '${_trybe?['category'] ?? widget.category}'.trim();
+
+  /// "42 members • San Francisco, CA • Public"
+  String get _displaySubtitle {
+    if (_trybe == null) {
+      return [widget.memberCount, widget.location]
+          .where((s) => s.trim().isNotEmpty)
+          .join(' • ');
+    }
+    final parts = <String>[
+      '${_trybe!['memberCount'] ?? 0} members',
+      if ('${_trybe!['location'] ?? ''}'.trim().isNotEmpty)
+        '${_trybe!['location']}',
+      _trybe!['isPublic'] == false ? 'Private' : 'Public',
+    ];
+    return parts.join(' • ');
+  }
+
+  Future<void> _toggleJoin() async {
+    final id = widget.trybeId;
+    if (id == null || _isTogglingJoin) return;
+
+    HapticFeedback.heavyImpact();
+    final shouldJoin = !_isJoined;
     setState(() {
-      _isJoined = !_isJoined;
+      _isJoined = shouldJoin;
+      _isTogglingJoin = true;
     });
+
+    final ok = await ApiService.setTrybeMembership(id, shouldJoin);
+    if (!mounted) return;
+    if (!ok) {
+      // The creator cannot leave their own Trybe, so revert and explain.
+      setState(() {
+        _isJoined = !shouldJoin;
+        _isTogglingJoin = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            shouldJoin
+                ? 'Could not join this Trybe. Please try again.'
+                : "You created this Trybe, so you can't leave it.",
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
+    setState(() => _isTogglingJoin = false);
+    _load();
+  }
+
+  static String _nameOf(Map<String, dynamic>? user) {
+    if (user == null) return 'Fitrybe Athlete';
+    final name = '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+    return name.isEmpty ? 'Fitrybe Athlete' : name;
+  }
+
+  static String _relativeTime(dynamic isoString) {
+    final parsed = DateTime.tryParse('${isoString ?? ''}');
+    if (parsed == null) return 'Just now';
+    final diff = DateTime.now().difference(parsed);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${(diff.inDays / 7).floor()}w ago';
   }
 
   void _showTrybeOptionsMenu() {
@@ -175,17 +282,21 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
               ),
               actions: [
                 GestureDetector(
-                  onTap: () {
+                  onTap: () async {
                     HapticFeedback.lightImpact();
+                    // Open (or create) this Trybe's group conversation.
+                    final conversationId = await ApiService.createConversation(
+                      trybeId: widget.trybeId,
+                    );
+                    if (!mounted || conversationId == null) return;
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => ChatDetailScreen(
-                          chatId: widget.title.replaceAll(' ', '_'),
-                          name: widget.title,
-                          avatar: widget.imageUrl,
+                          chatId: conversationId,
+                          name: _displayTitle,
+                          avatar: _displayImage,
                           isTrybe: true,
-                          isOnline: true,
                         ),
                       ),
                     );
@@ -235,10 +346,15 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                 background: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.network(
-                      widget.imageUrl,
-                      fit: BoxFit.cover,
-                    ),
+                    if (_displayImage == null)
+                      Container(color: _accent.withValues(alpha: 0.18))
+                    else
+                      Image.network(
+                        _displayImage!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            Container(color: _accent.withValues(alpha: 0.18)),
+                      ),
                     Container(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -260,29 +376,30 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: _accent,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  widget.category.toUpperCase(),
-                                  style: GoogleFonts.hankenGrotesk(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.5,
+                          if (_displayCategory.isNotEmpty)
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: _accent,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    _displayCategory.toUpperCase(),
+                                    style: GoogleFonts.hankenGrotesk(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
                           const SizedBox(height: 8),
                           Text(
-                            widget.title,
+                            _displayTitle,
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white,
                               fontSize: 26,
@@ -292,7 +409,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${widget.memberCount} • ${widget.location}',
+                            _displaySubtitle,
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white70,
                               fontSize: 13,
@@ -387,15 +504,19 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
 
             // Main Body Content
             Expanded(
-              child: IndexedStack(
-                index: _activeSubTab,
-                children: [
-                  _buildFeedView(),
-                  _buildLeaderboardView(),
-                  _buildEventsView(),
-                  _buildMembersView(),
-                ],
-              ),
+              child: _isLoading
+                  ? const LoadingStateView()
+                  : _error != null
+                      ? ErrorStateView(message: _error!, onRetry: _load)
+                      : IndexedStack(
+                          index: _activeSubTab,
+                          children: [
+                            _buildFeedView(),
+                            _buildLeaderboardView(),
+                            _buildEventsView(),
+                            _buildMembersView(),
+                          ],
+                        ),
             ),
           ],
         ),
@@ -461,9 +582,29 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
 
   // ── 1. FEED TAB VIEW ────────────────────────────────────────────────────────
   Widget _buildFeedView() {
-    return ListView(
+    // Weekly goal is derived from what members actually logged this week.
+    final weekAgo = DateTime.now().subtract(const Duration(days: 7));
+    double weeklyKm = 0;
+    for (final post in _posts) {
+      final activity = post['activity'];
+      if (activity is! Map) continue;
+      final created = DateTime.tryParse('${post['createdAt'] ?? ''}');
+      if (created == null || created.isBefore(weekAgo)) continue;
+      weeklyKm += ((activity['distance'] as num?) ?? 0) / 1000;
+    }
+    // Scale the target with the roster so the bar stays meaningful.
+    final memberCount = (_trybe?['memberCount'] as num?)?.toInt() ?? _members.length;
+    final targetKm = (memberCount * 25).clamp(25, 100000).toDouble();
+    final progress = (weeklyKm / targetKm).clamp(0.0, 1.0);
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: _accent,
+      backgroundColor: _cardBg,
+      child: ListView(
       padding: const EdgeInsets.all(20),
-      physics: const BouncingScrollPhysics(),
+      physics: const BouncingScrollPhysics(
+          parent: AlwaysScrollableScrollPhysics()),
       children: [
         // Weekly Trybe Goal Card
         Container(
@@ -489,7 +630,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                     ),
                   ),
                   Text(
-                    '425.8 / 500 km (85%)',
+                    '${weeklyKm.toStringAsFixed(1)} / ${targetKm.toStringAsFixed(0)} km (${(progress * 100).round()}%)',
                     style: GoogleFonts.hankenGrotesk(
                       color: _accent,
                       fontSize: 13,
@@ -502,7 +643,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
               ClipRRect(
                 borderRadius: BorderRadius.circular(6),
                 child: LinearProgressIndicator(
-                  value: 0.85,
+                  value: progress,
                   minHeight: 8,
                   backgroundColor: Colors.white10,
                   valueColor: AlwaysStoppedAnimation<Color>(_accent),
@@ -510,7 +651,9 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
               ),
               const SizedBox(height: 10),
               Text(
-                '425.8 km achieved by members this week',
+                weeklyKm == 0
+                    ? 'No distance logged by members this week yet'
+                    : '${weeklyKm.toStringAsFixed(1)} km achieved by members this week',
                 style: GoogleFonts.hankenGrotesk(
                   color: Colors.white38,
                   fontSize: 12,
@@ -521,66 +664,95 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
         ),
         const SizedBox(height: 24),
 
-        // Post 1: Marcus Chen
-        if (!_hidePost1) ...[
-          _buildFeedCard(
-            author: 'Marcus Chen',
-            time: '2h ago',
-            avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA6WB0sfMAaFfo5F_dwIad6ZGs7ulSBob3FMmrDmhtOJzchQRO1kQ477arp3E_zqR1e2HRU4O9zPR6NulCUQptJRJL0L1KYYDH5oPi92uqu8QsqUw-8xM09asGESGFKFyWIvWKw1Nl41cSnNhPABCmfjR6-XsgdajoAlsmMS8XGD13wiRcs-ayK0jhokb9QShfCCCYpwxgnKyz27HxCLrn5LXsL65kly2HvBKh8-o7-1dMd4-7UWF2HIklx4QomICGvKy6NbcwPmwo',
-            caption: "Just smashed the Morning Mist 10k Challenge! Who's joining the Saturday group run? 🏃‍♂️💨",
-            imageUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCbSCMsV9KQe-Ufcf5p7oP6YPC-9dbK582RBUf8UbE4q9YxcHM9O6mEB_MAFWpcMWg5Pvup83vzPmGSkp39tH3yZ8FNS39Qvv0I4cb5gpdZyGAxXYnkuETYcg1X5Cc3QxY6Hn-jwGNEdI2rYZ7Sf0dm0KzLb1OBIBYWfc4hOsuxSm69C5EJdo2IdGRIbiE-fSQCRI59DbxJRMIvlvW33lTl2ULjaTsDGytcyap7mAi3u07BjwoSUHEnzM8Rzn8I-DTnlZMsJbEmLvk',
-            isLiked: _post1Liked,
-            likesCount: _post1Likes,
-            comments: _post1Comments,
-            onLikeTap: () {
-              HapticFeedback.lightImpact();
-              setState(() {
-                _post1Liked = !_post1Liked;
-                _post1Likes += _post1Liked ? 1 : -1;
-              });
-            },
-            onHide: () => setState(() => _hidePost1 = true),
-          ),
-          const SizedBox(height: 20),
-        ],
-
-        // Post 2: Sarah J.
-        if (!_hidePost2) ...[
-          _buildFeedCard(
-            author: 'Sarah J.',
-            time: '4h ago',
-            avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDAP1fzvajosGDCVTnUyqq4353TwT5L9hbdzIAbfVjL23jJvqwjbbg9OEdJD3tgrwrmFKd9QBHpnh_P_TAreUaxMF87aHQGluoDMjKAIMNydXCSFOz7NoDC-C0qQ0PAQytcLv3yf-_Ht2YrCPaoIeHWLOjIWHct32nVuTRlVDle0tfc8u70qmwS3nvQ6yfc3tpX2A_w0nrzZOlzqFt3ArMcMGIp3JUD66upNfTKxZBZ-Dwvs3Mtpy1CCuj2LRYp3YM6QZk5MMqMx2A',
-            caption: 'Earned the 80% Century Club badge for this Trybe! Keep pushing everyone! 🏋️‍♀️✨',
-            imageUrl: null,
-            isLiked: _post2Liked,
-            likesCount: _post2Likes,
-            comments: _post2Comments,
-            onLikeTap: () {
-              HapticFeedback.lightImpact();
-              setState(() {
-                _post2Liked = !_post2Liked;
-                _post2Likes += _post2Liked ? 1 : -1;
-              });
-            },
-            onHide: () => setState(() => _hidePost2 = true),
-          ),
-        ],
+        if (_posts.isEmpty)
+          EmptyStateView(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            icon: Icons.forum_rounded,
+            title: 'No posts yet',
+            message:
+                'Nothing has been shared in this Trybe. Post a workout to kick things off.',
+          )
+        else
+          for (final post in _posts) ...[
+            _buildPostCardFor(post),
+            const SizedBox(height: 20),
+          ],
         const SizedBox(height: 80),
       ],
+      ),
+    );
+  }
+
+  /// Adapts an API post onto the existing feed-card layout.
+  Widget _buildPostCardFor(Map<String, dynamic> post) {
+    final postId = '${post['id'] ?? ''}';
+    final author = (post['author'] is Map)
+        ? Map<String, dynamic>.from(post['author'])
+        : <String, dynamic>{};
+    final counts = (post['_count'] is Map)
+        ? Map<String, dynamic>.from(post['_count'])
+        : <String, dynamic>{};
+    final images = (post['imageUrls'] is List)
+        ? List<dynamic>.from(post['imageUrls'])
+        : const [];
+
+    final liked = _likedPostIds.contains(postId) || post['likedByMe'] == true;
+    final baseLikes = (counts['likes'] as num?)?.toInt() ??
+        (post['likeCount'] as num?)?.toInt() ??
+        0;
+    final likes = _likeOverrides[postId] ?? baseLikes;
+
+    return _buildFeedCard(
+      postId: postId,
+      author: _nameOf(author),
+      time: _relativeTime(post['createdAt']),
+      avatarUrl: ApiService.media(author['avatarUrl'] as String?),
+      caption: '${post['caption'] ?? ''}',
+      imageUrl: images.isEmpty ? null : ApiService.media('${images.first}'),
+      isLiked: liked,
+      likesCount: likes,
+      commentCount: (counts['comments'] as num?)?.toInt() ??
+          (post['commentCount'] as num?)?.toInt() ??
+          0,
+      onLikeTap: () async {
+        HapticFeedback.lightImpact();
+        final next = !liked;
+        setState(() {
+          if (next) {
+            _likedPostIds.add(postId);
+          } else {
+            _likedPostIds.remove(postId);
+          }
+          _likeOverrides[postId] = likes + (next ? 1 : -1);
+        });
+        final ok = await ApiService.setLiked(postId, next);
+        if (!ok && mounted) {
+          setState(() {
+            if (next) {
+              _likedPostIds.remove(postId);
+            } else {
+              _likedPostIds.add(postId);
+            }
+            _likeOverrides[postId] = likes;
+          });
+        }
+      },
+      onHide: () => setState(() => _hiddenPostIds.add(postId)),
     );
   }
 
 
 
   Widget _buildFeedCard({
+    required String postId,
     required String author,
     required String time,
-    required String avatarUrl,
+    required String? avatarUrl,
     required String caption,
     required String? imageUrl,
     required bool isLiked,
     required int likesCount,
-    required List<Map<String, String>> comments,
+    required int commentCount,
     required VoidCallback onLikeTap,
     required VoidCallback onHide,
   }) {
@@ -596,7 +768,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
         children: [
           Row(
             children: [
-              CircleAvatar(radius: 18, backgroundImage: NetworkImage(avatarUrl)),
+              UserAvatar(url: avatarUrl, fallbackName: author, radius: 18),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -617,12 +789,19 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
             ],
           ),
           const SizedBox(height: 12),
-          Text(caption, style: GoogleFonts.hankenGrotesk(color: Colors.white70, fontSize: 13.5, height: 1.4)),
+          if (caption.isNotEmpty)
+            Text(caption, style: GoogleFonts.hankenGrotesk(color: Colors.white70, fontSize: 13.5, height: 1.4)),
           if (imageUrl != null) ...[
             const SizedBox(height: 12),
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: Image.network(imageUrl, height: 170, width: double.infinity, fit: BoxFit.cover),
+              child: Image.network(
+                imageUrl,
+                height: 170,
+                width: double.infinity,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
             ),
           ],
           const SizedBox(height: 14),
@@ -650,12 +829,12 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                   ),
                   const SizedBox(width: 20),
                   GestureDetector(
-                    onTap: () => _showCommentsSheet(context, author, comments),
+                    onTap: () => _showCommentsSheet(context, postId),
                     child: Row(
                       children: [
                         const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white60, size: 18),
                         const SizedBox(width: 6),
-                        Text('${comments.length}', style: GoogleFonts.hankenGrotesk(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12.5)),
+                        Text('$commentCount', style: GoogleFonts.hankenGrotesk(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 12.5)),
                       ],
                     ),
                   ),
@@ -675,10 +854,10 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
     );
   }
 
-  void _showCommentsSheet(
-      BuildContext context, String postAuthor, List<Map<String, String>> commentsList) {
+  void _showCommentsSheet(BuildContext context, String postId) {
     HapticFeedback.lightImpact();
     final commentCtrl = TextEditingController();
+    final commentsList = <Map<String, String>>[];
 
     showModalBottomSheet(
       context: context,
@@ -687,8 +866,36 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => StatefulBuilder(
+      builder: (ctx) {
+        bool isLoading = true;
+
+        return StatefulBuilder(
         builder: (ctx, setSheetState) {
+          // Load the real thread the first time the sheet lays out.
+          if (isLoading) {
+            ApiService.getComments(postId).then((fetched) {
+              commentsList
+                ..clear()
+                ..addAll(fetched.map((raw) {
+                  final author = (raw['author'] is Map)
+                      ? Map<String, dynamic>.from(raw['author'])
+                      : <String, dynamic>{};
+                  return {
+                    'name': _nameOf(author),
+                    'text': '${raw['text'] ?? ''}',
+                    'time': _relativeTime(raw['createdAt']),
+                    'avatar':
+                        ApiService.media(author['avatarUrl'] as String?) ?? '',
+                  };
+                }));
+              isLoading = false;
+              setSheetState(() {});
+            }).catchError((_) {
+              isLoading = false;
+              setSheetState(() {});
+            });
+          }
+
           return Padding(
             padding: EdgeInsets.only(
               bottom: MediaQuery.of(ctx).viewInsets.bottom,
@@ -728,7 +935,9 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                   const SizedBox(height: 12),
                   const Divider(color: Colors.white10),
                   Expanded(
-                    child: commentsList.isEmpty
+                    child: isLoading
+                        ? const LoadingStateView()
+                        : commentsList.isEmpty
                         ? Center(
                             child: Text(
                               'No comments yet. Be the first to comment!',
@@ -809,7 +1018,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                               controller: commentCtrl,
                               style: GoogleFonts.hankenGrotesk(color: Colors.white, fontSize: 14),
                               decoration: InputDecoration(
-                                hintText: 'Add a comment for $postAuthor...',
+                                hintText: 'Add a comment...',
                                 hintStyle: GoogleFonts.hankenGrotesk(color: Colors.white38, fontSize: 13),
                                 border: InputBorder.none,
                                 isDense: true,
@@ -819,20 +1028,23 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                         ),
                         const SizedBox(width: 8),
                         GestureDetector(
-                          onTap: () {
+                          onTap: () async {
                             final text = commentCtrl.text.trim();
-                            if (text.isNotEmpty) {
-                              HapticFeedback.mediumImpact();
-                              setState(() {
-                                commentsList.add({
-                                  'name': 'You',
-                                  'text': text,
-                                  'time': 'Just now',
-                                });
-                              });
-                              setSheetState(() {});
-                              commentCtrl.clear();
-                            }
+                            if (text.isEmpty) return;
+                            HapticFeedback.mediumImpact();
+                            final created =
+                                await ApiService.addComment(postId, text);
+                            if (created == null) return;
+                            commentsList.add({
+                              'name': SessionService().displayName,
+                              'text': '${created['text'] ?? text}',
+                              'time': 'Just now',
+                              'avatar': SessionService().avatarUrl ?? '',
+                            });
+                            commentCtrl.clear();
+                            setSheetState(() {});
+                            // Keep the card's comment count in step.
+                            if (mounted) _load();
                           },
                           child: Container(
                             width: 44,
@@ -852,7 +1064,8 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
             ),
           );
         },
-      ),
+      );
+      },
     );
   }
 
@@ -954,217 +1167,221 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
 
   // ── 2. LEADERBOARD TAB VIEW ──────────────────────────────────────────────────
   Widget _buildLeaderboardView() {
-    final leaderList = [
-      {'rank': '1', 'name': 'Marcus Chen', 'stat': '84.2 km', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuA6WB0sfMAaFfo5F_dwIad6ZGs7ulSBob3FMmrDmhtOJzchQRO1kQ477arp3E_zqR1e2HRU4O9zPR6NulCUQptJRJL0L1KYYDH5oPi92uqu8QsqUw-8xM09asGESGFKFyWIvWKw1Nl41cSnNhPABCmfjR6-XsgdajoAlsmMS8XGD13wiRcs-ayK0jhokb9QShfCCCYpwxgnKyz27HxCLrn5LXsL65kly2HvBKh8-o7-1dMd4-7UWF2HIklx4QomICGvKy6NbcwPmwo'},
-      {'rank': '2', 'name': 'Elena Forge', 'stat': '76.5 km', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDAP1fzvajosGDCVTnUyqq4353TwT5L9hbdzIAbfVjL23jJvqwjbbg9OEdJD3tgrwrmFKd9QBHpnh_P_TAreUaxMF87aHQGluoDMjKAIMNydXCSFOz7NoDC-C0qQ0PAQytcLv3yf-_Ht2YrCPaoIeHWLOjIWHct32nVuTRlVDle0tfc8u70qmwS3nvQ6yfc3tpX2A_w0nrzZOlzqFt3ArMcMGIp3JUD66upNfTKxZBZ-Dwvs3Mtpy1CCuj2LRYp3YM6QZk5MMqMx2A'},
-      {'rank': '3', 'name': 'David Kim', 'stat': '68.1 km', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuCbSCMsV9KQe-Ufcf5p7oP6YPC-9dbK582RBUf8UbE4q9YxcHM9O6mEB_MAFWpcMWg5Pvup83vzPmGSkp39tH3yZ8FNS39Qvv0I4cb5gpdZyGAxXYnkuETYcg1X5Cc3QxY6Hn-jwGNEdI2rYZ7Sf0dm0KzLb1OBIBYWfc4hOsuxSm69C5EJdo2IdGRIbiE-fSQCRI59DbxJRMIvlvW33lTl2ULjaTsDGytcyap7mAi3u07BjwoSUHEnzM8Rzn8I-DTnlZMsJbEmLvk'},
-      {'rank': '4', 'name': 'Sophia Martinez', 'stat': '54.0 km', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDKbEFetka61Uzn8RD44STxX3QwAz_xcaaMZ-qzvnunUmBoges-xYFwWQTFpXij18kynNXL1kCjJ7eHZrLBexMEquhDjbpT30ThWjuWEdlZaW_ByrqJdvwg18EsATBXBVms3RCoQVOkpH9PeZiVTAQVE1iGclOOB2OwI8EIuMCCTrdCrl7qcAnsjMphuMjE9MqHlVIp1wCbJOr1ql0Bsee3LkdKqgpT6d9PbFZUGm8ojitxqhE6k0tOEM1_5PnJwz9-xYmUS1H2faU'},
-      {'rank': '5', 'name': 'You (Alex)', 'stat': '48.5 km', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuAHT0fSiT-tBM9-LHbHVlF65CZIgyCqn-DoDUSl05Y0gcWZ5GDqFvUrdutx26mNY5DtnE0ZpijRovfDxUuDLTu5hStbuDoEqMg95eZOlGU7rLLNjJ0EvPXvLs18QfqyMuOb-lgEkqg4Ybw2FlQVeIXwhwd8mUkP3SpCWEUMQnuUuHL2ac9TI_c2sG5wyicbvZ1rz7TuvQ74aVOFymH_WjY3EuexlU6cz0GhX0Kb_z1JbXHSiQhULIuH'},
-    ];
+    if (_leaderboard.isEmpty) {
+      return EmptyStateView(
+        icon: Icons.leaderboard_rounded,
+        title: 'No rankings yet',
+        message:
+            'The leaderboard ranks members by distance covered. Record a workout to put yourself on the board.',
+      );
+    }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      physics: const BouncingScrollPhysics(),
-      itemCount: leaderList.length,
-      itemBuilder: (ctx, idx) {
-        final item = leaderList[idx];
-        final isMe = item['name']!.contains('You');
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+    final myUserId = SessionService().userId;
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: _accent,
+      backgroundColor: _cardBg,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(20),
+        physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics()),
+        itemCount: _leaderboard.length,
+        itemBuilder: (ctx, idx) {
+          final item = _leaderboard[idx];
+          final isMe = item['userId'] == myUserId;
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 28,
-                child: Text(
-                  item['rank']!,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 28,
+                  child: Text(
+                    '${item['rank'] ?? idx + 1}',
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              CircleAvatar(radius: 18, backgroundImage: NetworkImage(item['avatar']!)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  item['name']!,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: isMe ? _accent : Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                const SizedBox(width: 8),
+                UserAvatar(
+                  url: ApiService.media(item['avatarUrl'] as String?),
+                  fallbackName: '${item['name'] ?? ''}',
+                  radius: 18,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    isMe ? 'You' : '${item['name'] ?? 'Athlete'}',
+                    style: GoogleFonts.hankenGrotesk(
+                      color: isMe ? _accent : Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ),
-              ),
-              Text(
-                item['stat']!,
-                style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-              ),
-            ],
-          ),
-        );
-      },
+                Text(
+                  '${item['stat'] ?? '0 km'}',
+                  style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 
   // ── 3. EVENTS TAB VIEW ───────────────────────────────────────────────────────
   Widget _buildEventsView() {
-    final events = [
-      {
-        'id': 0,
-        'title': 'Saturday Sunrise 10K Group Run',
-        'date': 'Sat, Aug 15 • 06:00 AM',
-        'location': 'Hyde Park Bandstand, London',
-        'attendees': '24 Runners Going',
-      },
-      {
-        'id': 1,
-        'title': 'Wednesday Evening Tempo Sprints',
-        'date': 'Wed, Aug 19 • 07:00 PM',
-        'location': 'Regent\'s Park Track',
-        'attendees': '16 Runners Going',
-      },
-    ];
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      physics: const BouncingScrollPhysics(),
-      itemCount: events.length,
-      itemBuilder: (ctx, idx) {
-        final ev = events[idx];
-        final id = ev['id'] as int;
-        final isRsvped = _eventRsvp[id] ?? false;
-
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _accent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(Icons.event_rounded, color: _accent, size: 22),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(ev['title'] as String, style: GoogleFonts.hankenGrotesk(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 2),
-                        Text(ev['date'] as String, style: GoogleFonts.hankenGrotesk(color: _accent, fontSize: 12, fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const Icon(Icons.location_on_rounded, color: Colors.white38, size: 14),
-                  const SizedBox(width: 6),
-                  Text(ev['location'] as String, style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 12)),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(ev['attendees'] as String, style: GoogleFonts.hankenGrotesk(color: Colors.white38, fontSize: 11.5, fontWeight: FontWeight.bold)),
-                  ElevatedButton(
-                    onPressed: () {
-                      HapticFeedback.lightImpact();
-                      setState(() {
-                        _eventRsvp[id] = !isRsvped;
-                      });
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isRsvped ? const Color(0xFF2A2A2E) : _accent,
-                      foregroundColor: Colors.white,
-                      shape: const StadiumBorder(),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    ),
-                    child: Text(
-                      isRsvped ? 'GOING ✓' : 'RSVP',
-                      style: GoogleFonts.hankenGrotesk(fontSize: 11, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
+    // Scheduled Trybe events are not modelled in the backend yet; live group
+    // sessions are organised through the Clique tab instead.
+    return EmptyStateView(
+      icon: Icons.event_rounded,
+      title: 'No events scheduled',
+      message:
+          'This Trybe has no upcoming events. Group workouts you can join right now live in the Clique tab.',
     );
   }
 
   // ── 4. MEMBERS TAB VIEW ──────────────────────────────────────────────────────
   Widget _buildMembersView() {
-    final members = [
-      {'name': 'Marcus Chen', 'role': 'Trybe Creator', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuA6WB0sfMAaFfo5F_dwIad6ZGs7ulSBob3FMmrDmhtOJzchQRO1kQ477arp3E_zqR1e2HRU4O9zPR6NulCUQptJRJL0L1KYYDH5oPi92uqu8QsqUw-8xM09asGESGFKFyWIvWKw1Nl41cSnNhPABCmfjR6-XsgdajoAlsmMS8XGD13wiRcs-ayK0jhokb9QShfCCCYpwxgnKyz27HxCLrn5LXsL65kly2HvBKh8-o7-1dMd4-7UWF2HIklx4QomICGvKy6NbcwPmwo'},
-      {'name': 'Elena Forge', 'role': 'Captain', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDAP1fzvajosGDCVTnUyqq4353TwT5L9hbdzIAbfVjL23jJvqwjbbg9OEdJD3tgrwrmFKd9QBHpnh_P_TAreUaxMF87aHQGluoDMjKAIMNydXCSFOz7NoDC-C0qQ0PAQytcLv3yf-_Ht2YrCPaoIeHWLOjIWHct32nVuTRlVDle0tfc8u70qmwS3nvQ6yfc3tpX2A_w0nrzZOlzqFt3ArMcMGIp3JUD66upNfTKxZBZ-Dwvs3Mtpy1CCuj2LRYp3YM6QZk5MMqMx2A'},
-      {'name': 'David Kim', 'role': 'Member', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuCbSCMsV9KQe-Ufcf5p7oP6YPC-9dbK582RBUf8UbE4q9YxcHM9O6mEB_MAFWpcMWg5Pvup83vzPmGSkp39tH3yZ8FNS39Qvv0I4cb5gpdZyGAxXYnkuETYcg1X5Cc3QxY6Hn-jwGNEdI2rYZ7Sf0dm0KzLb1OBIBYWfc4hOsuxSm69C5EJdo2IdGRIbiE-fSQCRI59DbxJRMIvlvW33lTl2ULjaTsDGytcyap7mAi3u07BjwoSUHEnzM8Rzn8I-DTnlZMsJbEmLvk'},
-      {'name': 'Sophia Martinez', 'role': 'Member', 'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDKbEFetka61Uzn8RD44STxX3QwAz_xcaaMZ-qzvnunUmBoges-xYFwWQTFpXij18kynNXL1kCjJ7eHZrLBexMEquhDjbpT30ThWjuWEdlZaW_ByrqJdvwg18EsATBXBVms3RCoQVOkpH9PeZiVTAQVE1iGclOOB2OwI8EIuMCCTrdCrl7qcAnsjMphuMjE9MqHlVIp1wCbJOr1ql0Bsee3LkdKqgpT6d9PbFZUGm8ojitxqhE6k0tOEM1_5PnJwz9-xYmUS1H2faU'},
-    ];
+    if (_members.isEmpty) {
+      return EmptyStateView(
+        icon: Icons.group_rounded,
+        title: 'No members yet',
+        message: 'Be the first to join this Trybe.',
+      );
+    }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      physics: const BouncingScrollPhysics(),
-      itemCount: members.length,
-      itemBuilder: (ctx, idx) {
-        final m = members[idx];
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+    final myUserId = SessionService().userId;
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: _accent,
+      backgroundColor: _cardBg,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(20),
+        physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics()),
+        itemCount: _members.length,
+        itemBuilder: (ctx, idx) {
+          final member = _members[idx];
+          final user = (member['user'] is Map)
+              ? Map<String, dynamic>.from(member['user'])
+              : <String, dynamic>{};
+          final userId = user['id'] as String?;
+          final name = _nameOf(user);
+          final isMe = userId == myUserId;
+          final role = '${member['role'] ?? 'MEMBER'}';
+
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(radius: 20, backgroundImage: NetworkImage(m['avatar']!)),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(m['name']!, style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                    Text(m['role']!, style: GoogleFonts.hankenGrotesk(color: _accent, fontSize: 11.5, fontWeight: FontWeight.w600)),
-                  ],
+            child: Row(
+              children: [
+                UserAvatar(
+                  url: ApiService.media(user['avatarUrl'] as String?),
+                  fallbackName: name,
+                  radius: 20,
                 ),
-              ),
-              OutlinedButton(
-                onPressed: () {
-                  HapticFeedback.lightImpact();
-                },
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
-                  shape: const StadiumBorder(),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(isMe ? '$name (You)' : name,
+                          style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14)),
+                      Text(
+                        switch (role) {
+                          'CREATOR' => 'Trybe Creator',
+                          'CAPTAIN' => 'Captain',
+                          _ => 'Member',
+                        },
+                        style: GoogleFonts.hankenGrotesk(
+                            color: _accent,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
                 ),
-                child: Text('Follow', style: GoogleFonts.hankenGrotesk(fontSize: 11, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        );
-      },
+                if (!isMe && userId != null)
+                  _MemberFollowButton(userId: userId, accent: _accent),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Follow toggle in the members list, kept local so one row's request does not
+/// rebuild the whole roster.
+class _MemberFollowButton extends StatefulWidget {
+  final String userId;
+  final Color accent;
+
+  const _MemberFollowButton({required this.userId, required this.accent});
+
+  @override
+  State<_MemberFollowButton> createState() => _MemberFollowButtonState();
+}
+
+class _MemberFollowButtonState extends State<_MemberFollowButton> {
+  bool _isFollowing = false;
+  bool _isBusy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: _isBusy
+          ? null
+          : () async {
+              HapticFeedback.lightImpact();
+              final next = !_isFollowing;
+              setState(() {
+                _isFollowing = next;
+                _isBusy = true;
+              });
+              final ok = await ApiService.setFollowing(widget.userId, next);
+              if (!mounted) return;
+              setState(() {
+                if (!ok) _isFollowing = !next;
+                _isBusy = false;
+              });
+            },
+      style: OutlinedButton.styleFrom(
+        foregroundColor: _isFollowing ? widget.accent : Colors.white,
+        side: BorderSide(
+          color: _isFollowing
+              ? widget.accent.withValues(alpha: 0.5)
+              : Colors.white.withValues(alpha: 0.2),
+        ),
+        shape: const StadiumBorder(),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+      ),
+      child: Text(_isFollowing ? 'Following' : 'Follow',
+          style: GoogleFonts.hankenGrotesk(
+              fontSize: 11, fontWeight: FontWeight.bold)),
     );
   }
 }

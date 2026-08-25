@@ -5,8 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
-import '../models/post_store.dart';
-import '../services/post_service.dart';
+import '../services/api_service.dart';
 
 class CreatePostScreen extends StatefulWidget {
   const CreatePostScreen({super.key});
@@ -47,6 +46,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   final ImagePicker _picker = ImagePicker();
   String? _locationTag;
   bool _isFetchingLocation = false;
+  bool _isPosting = false;
 
   final String _avatarUrl =
       'https://lh3.googleusercontent.com/aida-public/AB6AXuAHT0fSiT-tBM9-LHbHVlF65CZIgyCqn-DoDUSl05Y0gcWZ5GDqFvUrdutx26mNY5DtnE0ZpijRovfDxUuDLTu5hStbuDoEqMg95eZOlGU7rLLNjJ0EvPXvLs18QfqyMuOb-lgEkqg4Ybw2FlQVeIXwhwd8mUkP3SpCWEUMQnuUuHL2ac9TI_c2sG5wyicbvZ1rz7TuvQ74aVOFymH_WjY3EuexlU6cz0GhX0Kb_z1JbXHSiQhULIuH';
@@ -192,7 +192,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   }
 
   // ── Post ───────────────────────────────────────────────────────────────────
-  void _handlePost() {
+  Future<void> _handlePost() async {
     HapticFeedback.mediumImpact();
     final caption = _captionController.text.trim();
     if (caption.isEmpty && _selectedImages.isEmpty) {
@@ -208,42 +208,50 @@ class _CreatePostScreenState extends State<CreatePostScreen>
       return;
     }
 
-    // Save post to store so ProfileTab can display it
-    PostStore.instance.addPost(
-      UserPost(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
+    if (_isPosting) return;
+    setState(() => _isPosting = true);
+
+    // The post lives on the server only — the feed re-reads it from the API so
+    // there is no second, local copy to keep in sync.
+    try {
+      await ApiService.createPost(
         caption: caption,
         type: _selectedPostType,
-        audience: _selectedAudience,
+        audience: _selectedAudience == 'Everyone' ? 'EVERYONE' : 'TRYBES',
         locationTag: _locationTag,
-        imagePaths: _selectedImages.map((x) => x.path).toList(),
-        createdAt: DateTime.now(),
-      ),
-    );
+        images: _selectedImages.map((x) => File(x.path)).toList(),
+      );
 
-    // Also send to Backend API
-    final imageFiles = _selectedImages.map((x) => File(x.path)).toList();
-    PostService().createPost(
-      caption: caption,
-      type: _selectedPostType,
-      audience: _selectedAudience == 'Everyone' ? 'EVERYONE' : 'TRYBES',
-      locationTag: _locationTag,
-      imageFiles: imageFiles.isNotEmpty ? imageFiles : null,
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: _accent,
-        content: Text(
-          'Post shared successfully!',
-          style: GoogleFonts.hankenGrotesk(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
+      if (!mounted) return;
+      setState(() => _isPosting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _accent,
+          content: Text(
+            'Post shared successfully!',
+            style: GoogleFonts.hankenGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-      ),
-    );
-    Navigator.pop(context);
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isPosting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not share your post. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
   }
 
   // ── UI ─────────────────────────────────────────────────────────────────────
@@ -281,15 +289,24 @@ class _CreatePostScreenState extends State<CreatePostScreen>
             child: Padding(
               padding: const EdgeInsets.only(right: 16),
               child: GestureDetector(
-                onTap: _handlePost,
-                child: Text(
-                  'Post',
-                  style: GoogleFonts.hankenGrotesk(
-                    color: _accent,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                onTap: _isPosting ? null : _handlePost,
+                child: _isPosting
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _accent,
+                        ),
+                      )
+                    : Text(
+                        'Post',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: _accent,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
               ),
             ),
           ),

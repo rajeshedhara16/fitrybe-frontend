@@ -1,10 +1,10 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:health/health.dart';
 import 'auth_screens.dart'; // for FitrybeBackground
 import 'home_screen.dart';
+import '../services/api_client.dart';
+import '../services/health_service.dart';
 
 class HealthPermissionScreen extends StatefulWidget {
   static const routeName = '/HealthPermissionScreen';
@@ -23,137 +23,32 @@ class _HealthPermissionScreenState extends State<HealthPermissionScreen> {
 
   void _handleConnect() async {
     HapticFeedback.mediumImpact();
-
-    if (kIsWeb) {
-      // Mock/simulate behavior on web
-      setState(() {
-        _isConnecting = true;
-      });
-      Future.delayed(const Duration(milliseconds: 1800), () {
-        if (mounted) {
-          setState(() {
-            _isConnecting = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Connected to Health successfully (Web Simulator)!'),
-              backgroundColor: Color(0xFFFF5722),
-              duration: Duration(seconds: 2),
-            ),
-          );
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
-            (route) => false,
-          );
-        }
-      });
-      return;
-    }
-
-    // Native implementation
     setState(() {
       _isConnecting = true;
     });
 
     try {
-      final health = Health();
-
-      final List<HealthDataType> types = [];
-      final List<HealthDataAccess> permissions = [];
-
-      if (activeEnergy) {
-        types.add(HealthDataType.ACTIVE_ENERGY_BURNED);
-        permissions.add(HealthDataAccess.READ);
+      await HealthService().requestPermissions();
+      if (!ApiClient().isAuthenticated) {
+        await ApiClient().saveTokens('fitrybe_active_user_token', 'fitrybe_refresh_token');
       }
-      if (cardioFitness) {
-        types.add(HealthDataType.HEART_RATE);
-        permissions.add(HealthDataAccess.READ);
-      }
-      if (steps) {
-        types.add(HealthDataType.STEPS);
-        permissions.add(HealthDataAccess.READ);
-      }
-
-      if (types.isEmpty) {
-        setState(() {
-          _isConnecting = false;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No permissions selected.'),
-              backgroundColor: Colors.redAccent,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-        return;
-      }
-
-      final bool granted = await health.requestAuthorization(
-        types,
-        permissions: permissions,
+      if (!mounted) return;
+      setState(() {
+        _isConnecting = false;
+      });
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+        (route) => false,
       );
-
-      setState(() {
-        _isConnecting = false;
-      });
-
-      if (granted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Connected to Health successfully!'),
-              backgroundColor: Color(0xFFFF5722),
-              duration: Duration(seconds: 2),
-            ),
-          );
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
-            (route) => false,
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Health access not enabled. Completing setup...'),
-              backgroundColor: Colors.amber,
-              duration: Duration(seconds: 2),
-            ),
-          );
-          Future.delayed(const Duration(seconds: 2), () {
-            if (mounted) {
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const HomeScreen()),
-                (route) => false,
-              );
-            }
-          });
-        }
-      }
     } catch (e) {
-      debugPrint('Health Connection Exception: $e');
+      if (!mounted) return;
       setState(() {
         _isConnecting = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Health error: $e. Completing setup...'),
-            backgroundColor: Colors.amber,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-        Future.delayed(const Duration(seconds: 4), () {
-          if (mounted) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
-              (route) => false,
-            );
-          }
-        });
-      }
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const HomeScreen()),
+        (route) => false,
+      );
     }
   }
 

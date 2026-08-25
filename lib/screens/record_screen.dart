@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'record_map_screen.dart';
+import '../services/health_service.dart';
 
 class RecordScreen extends StatefulWidget {
   static const routeName = '/RecordScreen';
@@ -65,6 +66,8 @@ class _RecordScreenState extends State<RecordScreen>
   @override
   void initState() {
     super.initState();
+    HealthService().fetchTodayHealthData();
+    _activeHeartRate = HealthService().healthNotifier.value.heartRate;
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),

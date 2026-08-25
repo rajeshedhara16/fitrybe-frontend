@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/api_service.dart';
 
 class CustomizeGoalScreen extends StatefulWidget {
   static const routeName = '/CustomizeGoalScreen';
@@ -600,8 +601,21 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
             height: 56,
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 HapticFeedback.lightImpact();
+                final int targetVal = _metricTargets[_selectedMetricIndex];
+                try {
+                  await ApiService.updateGoals({
+                    'activity': selectedActivity['name'],
+                    'metric': selectedMetric,
+                    'targetValue': targetVal,
+                    'unit': currentUnit,
+                    'frequency': selectedFrequency,
+                    'period': selectedFrequency.toUpperCase(),
+                  });
+                } catch (_) {}
+
+                if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     backgroundColor: _accent,
@@ -614,7 +628,7 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                     ),
                   ),
                 );
-                Navigator.pop(context);
+                Navigator.pop(context, true);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: _accent,

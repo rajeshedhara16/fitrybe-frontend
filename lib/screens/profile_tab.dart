@@ -7,6 +7,7 @@ import 'achievements_screen.dart';
 import '../models/post_store.dart';
 import '../models/achievement_model.dart';
 import '../widgets/achievement_badge_widget.dart';
+import '../services/health_service.dart';
 import 'package:share_plus/share_plus.dart';
 
 class ProfileTab extends StatefulWidget {
@@ -35,6 +36,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
+    HealthService().fetchTodayHealthData();
     _streakController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -316,52 +318,68 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   }
 
   Widget _buildBentoGrid() {
-    return Column(
-      children: [
-        // Total Distance card
-        _buildBentoCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    return ValueListenableBuilder<HealthDataSummary>(
+      valueListenable: HealthService().healthNotifier,
+      builder: (context, health, _) {
+        return Column(
+          children: [
+            // Total Distance card
+            _buildBentoCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.route_rounded, color: _accent, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    'TOTAL DISTANCE',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white38,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.route_rounded, color: _accent, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            'TOTAL DISTANCE',
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white38,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '${health.steps} Steps Today',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: _accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  RichText(
+                    text: TextSpan(
+                      text: '${health.distanceKm} ',
+                      style: GoogleFonts.anybody(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      children: [
+                        TextSpan(
+                          text: 'km',
+                          style: GoogleFonts.hankenGrotesk(
+                            color: Colors.white38,
+                            fontSize: 14,
+                            fontWeight: FontWeight.normal,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              RichText(
-                text: TextSpan(
-                  text: '2,450 ',
-                  style: GoogleFonts.anybody(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'km',
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white38,
-                        fontSize: 14,
-                        fontWeight: FontWeight.normal,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
         const SizedBox(height: 10),
 
         // Row of stats and streak
@@ -526,7 +544,9 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
         ),
       ],
     );
-  }
+  },
+);
+}
 
   Widget _buildBentoCard({required Widget child, double? height}) {
     return Container(

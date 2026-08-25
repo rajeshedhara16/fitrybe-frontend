@@ -1,7 +1,25 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'home_screen.dart';
 import 'user_details_screen.dart';
+import '../services/api_service.dart';
+import '../services/session_service.dart';
+
+/// Surfaces backend auth failures (bad credentials, duplicate email,
+/// unreachable server) instead of leaving the button silently idle.
+void _showAuthError(BuildContext context, Object error) {
+  final message = error is ApiException
+      ? error.message
+      : 'Could not reach Fitrybe. Check your connection and try again.';
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message, style: GoogleFonts.hankenGrotesk()),
+      backgroundColor: const Color(0xFF2D2D2D),
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
+}
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,6 +33,38 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _isLoading = false;
+
+  Future<void> _handleLogin() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _isLoading = true);
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    try {
+      await ApiService.login(email, password);
+      final user = await SessionService().load();
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      // Users who never finished the profile wizard resume it on next sign-in.
+      final completedOnboarding = user?['onboardingCompleted'] == true;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (context) => completedOnboarding
+              ? const HomeScreen()
+              : const UserDetailsScreen(),
+        ),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showAuthError(context, e);
+    }
+  }
 
   @override
   void dispose() {
@@ -147,13 +197,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Password reset link sent to your email.'),
-                              ),
-                            );
-                          },
+                          onPressed: () {},
                           child: Text(
                             'Forgot Password?',
                             style: GoogleFonts.hankenGrotesk(
@@ -168,25 +212,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
                       // Login Button (Solid Orange Capsule)
                       ElevatedButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const UserDetailsScreen()),
-                          );
-                        },
+                        onPressed: _isLoading ? null : _handleLogin,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFFF5722),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 18),
                           shape: const StadiumBorder(),
                         ),
-                        child: Text(
-                          'Login',
-                          style: GoogleFonts.hankenGrotesk(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                              )
+                            : Text(
+                                'Login',
+                                style: GoogleFonts.hankenGrotesk(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                       ),
                       const SizedBox(height: 32),
 
@@ -298,6 +343,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _isLoading = false;
+
+  Future<void> _handleRegister() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() => _isLoading = true);
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    try {
+      await ApiService.register(email, password);
+      await SessionService().load();
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const UserDetailsScreen()),
+        (route) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showAuthError(context, e);
+    }
+  }
 
   @override
   void dispose() {
@@ -461,25 +532,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                       // Create Account Button (Solid Orange Capsule)
                       ElevatedButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const UserDetailsScreen()),
-                          );
-                        },
+                        onPressed: _isLoading ? null : _handleRegister,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFFF5722),
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 18),
                           shape: const StadiumBorder(),
                         ),
-                        child: Text(
-                          'Create Account',
-                          style: GoogleFonts.hankenGrotesk(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                              )
+                            : Text(
+                                'Create Account',
+                                style: GoogleFonts.hankenGrotesk(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                       ),
                       const SizedBox(height: 32),
 
