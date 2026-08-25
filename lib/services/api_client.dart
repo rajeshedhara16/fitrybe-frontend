@@ -29,8 +29,8 @@ class ApiClient {
           : 'http://$_hostOverride:4000';
     }
     if (kIsWeb) return 'http://localhost:4000';
-    // Android emulators reach the host machine's loopback via 10.0.2.2.
-    if (Platform.isAndroid) return 'http://10.0.2.2:4000';
+    // 127.0.0.1:4000 routes via adb reverse tcp:4000 tcp:4000 for physical devices & local host
+    if (Platform.isAndroid) return 'http://127.0.0.1:4000';
     return 'http://localhost:4000';
   }
 
