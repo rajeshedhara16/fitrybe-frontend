@@ -255,13 +255,13 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                                 image: FileImage(_trybeImageFile!),
                                 fit: BoxFit.cover,
                               )
-                            : const DecorationImage(
-                                image: NetworkImage(
-                                  'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=400',
-                                ),
-                                fit: BoxFit.cover,
-                              ),
+                            : null,
                       ),
+                      // Prompt for a cover photo instead of showing a stock one.
+                      child: _trybeImageFile != null
+                          ? null
+                          : Icon(Icons.groups_rounded,
+                              color: _accent.withValues(alpha: 0.7), size: 40),
                     ),
                   ),
                   Positioned(

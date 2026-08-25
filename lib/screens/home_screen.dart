@@ -50,30 +50,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _followedUsers = {};
   final Set<String> _hiddenUserPostIds = {};
 
-  final Map<String, List<Map<String, String>>> _postComments = {
-    'marcus_post_1': [
-      {
-        'author': 'Sarah Jenkins',
-        'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDZEtQZ2pORiFgwS8V2nQO0E69YkI0Oqooc8KhFjmnTDLcYvyoMxeLVRixFQd9a_BBq9BG9nvLci8oAL92pScug74S9dIcF6fIRW_uznf2ED1ss6gtmVCpajslV1W_mEgVJh1D8_eaA_XdbpOEMbhFcQCVGihiYEC7dPpHMOjGWwHCmHkoW-cWIo84ku68eXpJYrAqDMoAjPaFHk6bpwduHgxoRYNvB-mMS4bFDxEbb2Qkf7hSAlA5mWF6P3WQVed2wLfpN7uSNFAg',
-        'text': 'Insane pace Marcus! Let\'s run together next week.',
-        'time': '1h ago',
-      },
-      {
-        'author': 'David Kim',
-        'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuDKbEFetka61Uzn8RD44STxX3QwAz_xcaaMZ-qzvnunUmBoges-xYFwWQTFpXij18kynNXL1kCjJ7eHZrLBexMEquhDjbpT30ThWjuWEdlZaW_ByrqJdvwg18EsATBXBVms3RCoQVOkpH9PeZiVTAQVE1iGclOOB2OwI8EIuMCCTrdCrl7qcAnsjMphuMjE9MqHlVIp1wCbJOr1ql0Bsee3LkdKqgpT6d9PbFZUGm8ojitxqhE6k0tOEM1_5PnJwz9-xYmUS1H2faU',
-        'text': 'Congrats on the PR! 🔥',
-        'time': '30m ago',
-      },
-    ],
-    'elena_post_1': [
-      {
-        'author': 'Marcus Vane',
-        'avatar': 'https://lh3.googleusercontent.com/aida-public/AB6AXuBgjRSNIhjmFhRP_8S3tuvi1UgLC68VGmAkh42cOH9VQliTiy7tCc6SthMMHXDQA4u5KVBjJbgUpMGDWngdIa0napfGh8KuaI2R7Vg5APFj_FuEPtSycFIZ0S48-A0mTSDF9pEM1B68-1eG3zJonxwSmwvmtIGw9-09xvJbXE20Bc3pv4KvyqQJNn1emw8tMbAY9KUjxJD_Lmjaw4Duenm3KPou27843mgzy-OF2cdC5p_ej4RvuGJAVUmHusIFbL2nb5sunZYAAqE',
-        'text': 'Strong lifts Elena! That bench is crazy.',
-        'time': '4h ago',
-      },
-    ],
-  };
+  /// Comment threads keyed by post id, filled from the API on demand.
+  final Map<String, List<Map<String, String>>> _postComments = {};
 
   final Map<String, int> _userPostLikes = {};
   final Set<String> _likedUserPostIds = {};
@@ -767,7 +745,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final String caption = post['caption'] ?? '';
     final Map<String, dynamic> author = (post['author'] is Map) ? Map<String, dynamic>.from(post['author']) : {};
     final String authorName = '${author['firstName'] ?? 'Fitrybe'} ${author['lastName'] ?? 'User'}'.trim();
-    final String avatarUrl = author['avatarUrl'] ?? _userProfileUrl;
+    final String? avatarUrl = ApiService.media(author['avatarUrl'] as String?);
     final List imageUrls = (post['imageUrls'] is List) ? post['imageUrls'] : [];
     final Map<String, dynamic>? activity = (post['activity'] is Map) ? Map<String, dynamic>.from(post['activity']) : null;
     final String postType = (post['type'] ?? 'Workout').toString();
@@ -792,11 +770,10 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                CircleAvatar(
+                UserAvatar(
+                  url: avatarUrl,
+                  fallbackName: authorName,
                   radius: 20,
-                  backgroundImage: avatarUrl.startsWith('http')
-                      ? NetworkImage(avatarUrl)
-                      : NetworkImage('http://127.0.0.1:4000$avatarUrl') as ImageProvider,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -877,30 +854,36 @@ class _HomeScreenState extends State<HomeScreen> {
 
           const SizedBox(height: 16),
 
-          // Activity Image with Stack Overlay (Matching Hardcoded Post UI!)
+          // Activity image, resolved against the configured API host.
           Builder(
             builder: (context) {
-              final String displayImageUrl = imageUrls.isNotEmpty
-                  ? (imageUrls.first.toString().startsWith('http')
-                      ? imageUrls.first.toString()
-                      : 'http://127.0.0.1:4000${imageUrls.first}')
-                  : 'https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?auto=format&fit=crop&w=1000&q=80';
+              final String? displayImageUrl = imageUrls.isEmpty
+                  ? null
+                  : ApiService.media('${imageUrls.first}');
 
               return AspectRatio(
                 aspectRatio: 4 / 5,
                 child: Stack(
                   children: [
                     Positioned.fill(
-                      child: Image.network(
-                        displayImageUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          color: _cardBg,
-                          child: const Center(
-                            child: Icon(Icons.directions_run_rounded, color: Colors.white24, size: 48),
-                          ),
-                        ),
-                      ),
+                      child: displayImageUrl == null
+                          ? Container(
+                              color: _cardBg,
+                              child: const Center(
+                                child: Icon(Icons.directions_run_rounded,
+                                    color: Colors.white24, size: 48),
+                              ),
+                            )
+                          : Image.network(
+                              displayImageUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Container(
+                                color: _cardBg,
+                                child: const Center(
+                                  child: Icon(Icons.directions_run_rounded, color: Colors.white24, size: 48),
+                                ),
+                              ),
+                            ),
                     ),
                     Positioned.fill(
                       child: DecoratedBox(
@@ -1732,7 +1715,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       context: context,
                       isOwnPost: true,
                       postId: post.id,
-                      authorName: 'Alex Thorne',
+                      authorName: SessionService().displayName,
                       onHide: () {
                         setState(() {
                           _hiddenUserPostIds.add(post.id);

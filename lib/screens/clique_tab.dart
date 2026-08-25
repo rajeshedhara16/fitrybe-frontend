@@ -228,6 +228,10 @@ class _CliqueTabState extends State<CliqueTab>
           : '$type session',
       'isParticipant': participants.whereType<Map>().any(
           (p) => '${p['userId']}' == SessionService().userId),
+      'participants': participants
+          .whereType<Map>()
+          .map((p) => Map<String, dynamic>.from(p))
+          .toList(),
     };
   }
 
@@ -640,11 +644,12 @@ class _CliqueTabState extends State<CliqueTab>
             children: [
               Row(
                 children: [
-                  _buildStackedAvatar(
-                      'https://lh3.googleusercontent.com/aida-public/AB6AXuD8hDKxj4-r6R8f8AdaM3EVji_zeIwgSPFO5cPsoOQdNnP2WMtFn16ghzR2EV6BKxYC90N4Sce9VEb6Y6a7Noeqmgxx6Am9aDdSbwLwp6V74i0Vp_NC2R9wRxWYrDEXj0Y6SvchlV2xp_8UHLq8c1OCDhk6a5bK8s9bNiprCklvCQ20HpPN5Tvgee3pQP9V-fk8hxq1CmeJxvGcXy3xZSfWO5hMiAjrtJ8ZvPFGqPf-IapnbkrQYWw5eJ-MdhIpI6ToFK-8sTj6hRA'),
-                  const SizedBox(width: 4),
-                  _buildStackedAvatar(
-                      'https://lh3.googleusercontent.com/aida-public/AB6AXuB-kK8DqGrsg2wgRF85wfvfo2roceLvv9THYdX7crrxp1AbPklw21sOX74b65g2KizCw9AkkgKJr95f4Ev1U2IXq3EXYuBCA1yd0E4RvpwW0QKxmUOTEwFgUYFb1VQK1vtuEmghq0wd5FAvXb-pnosFKa-TyuojSRalMGTz8wVBgBmDj76b1taOqJcKlSB2XRIpSz42oy5itv9an0NzwNm-CNbyDk2DQVCtFQV8RdP5TbtmJbzost5vs8-5LQxLUNRW89xvRqmNAWI'),
+                  for (final p in ((act['participants'] as List?) ?? const [])
+                      .whereType<Map>()
+                      .take(4)) ...[
+                    _buildStackedAvatar(p),
+                    const SizedBox(width: 4),
+                  ],
                 ],
               ),
               Text(
@@ -702,14 +707,21 @@ class _CliqueTabState extends State<CliqueTab>
     );
   }
 
-  Widget _buildStackedAvatar(String url) {
+  Widget _buildStackedAvatar(Map participant) {
+    final user = (participant['user'] is Map)
+        ? Map<String, dynamic>.from(participant['user'])
+        : const <String, dynamic>{};
+    final name = '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+
     return Container(
-      width: 28,
-      height: 28,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(color: const Color(0xFF1E1E22), width: 1.5),
-        image: DecorationImage(image: NetworkImage(url), fit: BoxFit.cover),
+      ),
+      child: UserAvatar(
+        url: ApiService.media(user['avatarUrl'] as String?),
+        fallbackName: name.isEmpty ? 'Athlete' : name,
+        radius: 14,
       ),
     );
   }
@@ -1106,16 +1118,11 @@ class _CliqueTabState extends State<CliqueTab>
                     ],
                   ),
                   padding: const EdgeInsets.all(2),
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      image: DecorationImage(
-                        image: NetworkImage(
-                          'https://lh3.googleusercontent.com/aida-public/AB6AXuByqReTPoPaqgAoIGx5u7rtuMwXJgIGXBB_-tKwSu1hAOaFlZpNn1b9K0eaZKQBim5F1jY9-ZA3oycSmvuwdqXmtrlvnJSzi4PTRsGa8NI-c-W27mqOrL3PXiWF6noRE4HMHeuWFTHZzqw9Hm5NlZXXXZDEAJuf1WW9Ob3LT4_oEQrTno7uUu5kk6Pt5SWCdDZ4B7NlGVZhIAJnN4OufENxsprStF0wCRDAfIw1YA6Q1J4cHLCNqby_5MwswfBa5iPlMoWCtSr7pxQ',
-                        ),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                  // The orbit centre is the signed-in athlete.
+                  child: UserAvatar(
+                    url: SessionService().avatarUrl,
+                    fallbackName: SessionService().displayName,
+                    radius: 32,
                   ),
                 ),
               ),

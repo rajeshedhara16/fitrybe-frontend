@@ -6,6 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import '../services/api_service.dart';
+import '../services/session_service.dart';
+import '../widgets/user_avatar.dart';
 
 class CreatePostScreen extends StatefulWidget {
   const CreatePostScreen({super.key});
@@ -48,8 +50,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   bool _isFetchingLocation = false;
   bool _isPosting = false;
 
-  final String _avatarUrl =
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuAHT0fSiT-tBM9-LHbHVlF65CZIgyCqn-DoDUSl05Y0gcWZ5GDqFvUrdutx26mNY5DtnE0ZpijRovfDxUuDLTu5hStbuDoEqMg95eZOlGU7rLLNjJ0EvPXvLs18QfqyMuOb-lgEkqg4Ybw2FlQVeIXwhwd8mUkP3SpCWEUMQnuUuHL2ac9TI_c2sG5wyicbvZ1rz7TuvQ74aVOFymH_WjY3EuexlU6cz0GhX0Kb_z1JbXHSiQhULIuH';
+  String? get _avatarUrl => SessionService().avatarUrl;
 
   late TabController _tabController;
 
@@ -386,16 +387,10 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          image: DecorationImage(
-                            image: NetworkImage(_avatarUrl),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
+                      UserAvatar(
+                        url: _avatarUrl,
+                        fallbackName: SessionService().displayName,
+                        radius: 22,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -403,7 +398,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Alex Thorne',
+                              SessionService().displayName,
                               style: GoogleFonts.hankenGrotesk(
                                 color: Colors.white,
                                 fontSize: 14,
