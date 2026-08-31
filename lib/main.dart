@@ -3,6 +3,7 @@ import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'screens/user_details_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/api_client.dart';
 import 'services/session_service.dart';
 
@@ -39,32 +40,57 @@ class _SessionGate extends StatefulWidget {
 
 class _SessionGateState extends State<_SessionGate> {
   late Future<Map<String, dynamic>?> _bootstrap;
+  bool _splashFinished = false;
+  Map<String, dynamic>? _userData;
+  bool _isLoaded = false;
 
   @override
   void initState() {
     super.initState();
-    _bootstrap = SessionService().load();
+    _bootstrap = SessionService().load().then((data) {
+      _userData = data;
+      _isLoaded = true;
+      return data;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, dynamic>?>(
-      future: _bootstrap,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            backgroundColor: AppTheme.darkBackground,
-            body: Center(
-              child: CircularProgressIndicator(color: AppTheme.primaryOrange),
-            ),
-          );
-        }
+    if (!_splashFinished) {
+      return SplashScreen(
+        onFinished: () {
+          if (mounted) {
+            setState(() {
+              _splashFinished = true;
+            });
+          }
+        },
+      );
+    }
 
-        final user = snapshot.data;
-        if (user == null) return const WelcomeScreen();
-        if (user['onboardingCompleted'] != true) return const UserDetailsScreen();
-        return const HomeScreen();
-      },
-    );
+    if (!_isLoaded) {
+      return FutureBuilder<Map<String, dynamic>?>(
+        future: _bootstrap,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Scaffold(
+              backgroundColor: AppTheme.darkBackground,
+              body: Center(
+                child: CircularProgressIndicator(color: AppTheme.primaryOrange),
+              ),
+            );
+          }
+
+          final user = snapshot.data;
+          if (user == null) return const WelcomeScreen();
+          if (user['onboardingCompleted'] != true) return const UserDetailsScreen();
+          return const HomeScreen();
+        },
+      );
+    }
+
+    if (_userData == null) return const WelcomeScreen();
+    if (_userData!['onboardingCompleted'] != true) return const UserDetailsScreen();
+    return const HomeScreen();
   }
 }

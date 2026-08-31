@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'clique_live_activity_screen.dart';
 import '../services/api_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/state_views.dart';
 
 enum _NotifType {
@@ -9,6 +11,7 @@ enum _NotifType {
   comment,
   followRequest,
   trybeInvite,
+  cliqueInvite,
   achievement,
   liveActivity,
   badge,
@@ -25,6 +28,7 @@ class _NotificationItem {
     this.avatarUrl,
     this.isRead = false,
     this.actionable = false,
+    this.entityId,
   });
 
   final String id;
@@ -35,6 +39,8 @@ class _NotificationItem {
   final String? avatarUrl;
   bool isRead;
   final bool actionable;
+  /// Id of the thing the notification points at (clique session, trybe, post).
+  final String? entityId;
   String? actionResolution; // null, 'accepted', 'declined', 'joined', 'ignored'
 }
 
@@ -93,6 +99,8 @@ class _NotificationsTabState extends State<NotificationsTab> {
         _earlier = earlier;
         _isLoading = false;
       });
+      final unread = (payload['unreadCount'] as num?)?.toInt();
+      if (unread != null) NotificationService().unreadCount.value = unread;
     } catch (e) {
       debugPrint('Notifications load error: $e');
       if (!mounted) return;
@@ -126,7 +134,10 @@ class _NotificationsTabState extends State<NotificationsTab> {
       time: _relativeTime(raw['createdAt']),
       avatarUrl: ApiService.media(actor['avatarUrl'] as String?),
       isRead: raw['isRead'] == true,
-      actionable: type == _NotifType.trybeInvite,
+      // Invites are the only notifications with something to accept.
+      actionable: type == _NotifType.trybeInvite ||
+          type == _NotifType.cliqueInvite,
+      entityId: raw['entityId'] as String?,
     );
   }
 
@@ -136,7 +147,8 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'FOLLOW' => _NotifType.follow,
         'TRYBE_INVITE' => _NotifType.trybeInvite,
         'ACHIEVEMENT' => _NotifType.achievement,
-        'CLIQUE_INVITE' || 'CLIQUE_START' => _NotifType.liveActivity,
+        'CLIQUE_INVITE' => _NotifType.cliqueInvite,
+        'CLIQUE_START' => _NotifType.liveActivity,
         'BADGE' => _NotifType.badge,
         _ => _NotifType.kudos,
       };
@@ -164,13 +176,77 @@ class _NotificationsTabState extends State<NotificationsTab> {
         n.isRead = true;
       }
     });
+    NotificationService().markAllReadLocally();
     await ApiService.markAllNotificationsRead();
   }
 
   Future<void> _markRead(_NotificationItem item) async {
     if (item.isRead) return;
     setState(() => item.isRead = true);
+    NotificationService().decrement();
     await ApiService.markNotificationRead(item.id);
+  }
+
+  /// Accepts a Clique invite: joins the lobby, then opens it.
+  Future<void> _acceptCliqueInvite(_NotificationItem item) async {
+    final sessionId = item.entityId;
+    if (sessionId == null) return;
+    HapticFeedback.mediumImpact();
+
+    try {
+      await ApiService.joinClique(sessionId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not join this activity. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      item.actionResolution = 'joined';
+      item.isRead = true;
+    });
+    _markReadOnServer(item);
+
+    final session = await ApiService.getClique(sessionId);
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CliqueLiveActivityScreen(
+          sessionId: sessionId,
+          activityName: '${session?['title'] ?? item.subtitle}',
+          activityType: '${session?['activityType'] ?? 'Run'}',
+        ),
+      ),
+    );
+  }
+
+  /// Declines a Clique invite, removing the pending participant row.
+  Future<void> _declineCliqueInvite(_NotificationItem item) async {
+    final sessionId = item.entityId;
+    HapticFeedback.mediumImpact();
+    setState(() {
+      item.actionResolution = 'ignored';
+      item.isRead = true;
+    });
+    _markReadOnServer(item);
+    if (sessionId != null) await ApiService.leaveClique(sessionId);
+  }
+
+  void _markReadOnServer(_NotificationItem item) {
+    NotificationService().decrement();
+    ApiService.markNotificationRead(item.id);
   }
 
   void _resolveAction(_NotificationItem item, String resolution, String message) {
@@ -179,7 +255,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
       item.actionResolution = resolution;
       item.isRead = true;
     });
-    ApiService.markNotificationRead(item.id);
+    _markReadOnServer(item);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: _accent,
@@ -327,6 +403,8 @@ class _NotificationsTabState extends State<NotificationsTab> {
         return (icon: Icons.person_add_alt_1_rounded, color: const Color(0xFF81C784));
       case _NotifType.trybeInvite:
         return (icon: Icons.group_add_rounded, color: const Color(0xFFFFB300));
+      case _NotifType.cliqueInvite:
+        return (icon: Icons.bolt_rounded, color: const Color(0xFFFF5722));
       case _NotifType.achievement:
         return (icon: Icons.emoji_events_rounded, color: const Color(0xFFFF5722));
       case _NotifType.liveActivity:
@@ -490,19 +568,26 @@ class _NotificationsTabState extends State<NotificationsTab> {
       );
     }
 
-    final bool isInvite = item.type == _NotifType.trybeInvite;
-    final String positiveLabel = isInvite ? 'Join' : 'Accept';
+    final bool isClique = item.type == _NotifType.cliqueInvite;
+    final bool isInvite = item.type == _NotifType.trybeInvite || isClique;
+    final String positiveLabel = isClique ? 'Accept' : (isInvite ? 'Join' : 'Accept');
     final String negativeLabel = isInvite ? 'Ignore' : 'Decline';
 
     return Row(
       children: [
         Expanded(
           child: GestureDetector(
-            onTap: () => _resolveAction(
-              item,
-              isInvite ? 'joined' : 'accepted',
-              isInvite ? 'Joined the Trybe!' : 'Follow request accepted',
-            ),
+            onTap: () {
+              if (isClique) {
+                _acceptCliqueInvite(item);
+                return;
+              }
+              _resolveAction(
+                item,
+                isInvite ? 'joined' : 'accepted',
+                isInvite ? 'Joined the Trybe!' : 'Follow request accepted',
+              );
+            },
             child: Container(
               height: 36,
               alignment: Alignment.center,
@@ -524,11 +609,17 @@ class _NotificationsTabState extends State<NotificationsTab> {
         const SizedBox(width: 10),
         Expanded(
           child: GestureDetector(
-            onTap: () => _resolveAction(
-              item,
-              isInvite ? 'ignored' : 'declined',
-              isInvite ? 'Invite ignored' : 'Follow request declined',
-            ),
+            onTap: () {
+              if (isClique) {
+                _declineCliqueInvite(item);
+                return;
+              }
+              _resolveAction(
+                item,
+                isInvite ? 'ignored' : 'declined',
+                isInvite ? 'Invite ignored' : 'Follow request declined',
+              );
+            },
             child: Container(
               height: 36,
               alignment: Alignment.center,

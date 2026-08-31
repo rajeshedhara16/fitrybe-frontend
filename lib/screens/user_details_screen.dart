@@ -35,7 +35,6 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
 
   static const int _totalSteps = 3;
   static const Color _accent = Color(0xFFFF5722);
-  static const Color _accentLight = Color(0xFFFF7043);
   static const Color _card = Color(0xFF1C1C1E);
 
   int _currentPageIndex = 0;
@@ -59,8 +58,6 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
 
   // ---- Preference page state -------------------------------------------
   final ScrollController _prefScrollController = ScrollController();
-  bool _expandDistance = false;
-  bool _expandLocation = false;
 
   // ---- Preference data --------------------------------------------------
 
@@ -137,12 +134,7 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
     super.dispose();
   }
 
-  double get _pageValue {
-    if (_pageController.hasClients && _pageController.position.haveDimensions) {
-      return _pageController.page ?? _currentPageIndex.toDouble();
-    }
-    return _currentPageIndex.toDouble();
-  }
+
 
   void _handleBack() {
     if (_currentPageIndex == 0) {
@@ -264,57 +256,169 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
     }
   }
 
-  Widget _buildProgressHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'STEP ${_currentPageIndex + 1} OF $_totalSteps',
-                style: GoogleFonts.hankenGrotesk(
-                  color: _accent,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              Text(
-                _currentPageIndex == 0
-                    ? 'About you'
-                    : _currentPageIndex == 1
-                    ? 'Gender'
-                    : 'Preferences',
-                style: GoogleFonts.hankenGrotesk(
-                  color: const Color(0xFFA0A0A0),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
+  void _handleContinue() {
+    FocusScope.of(context).unfocus();
+    if (_currentPageIndex == 0) {
+      _goToGenderStep();
+    } else if (_currentPageIndex == 1) {
+      if (selectedGender.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Please select an option to continue',
+              style: GoogleFonts.hankenGrotesk(),
+            ),
+            backgroundColor: const Color(0xFF2D2D2D),
+            behavior: SnackBarBehavior.floating,
           ),
-          const SizedBox(height: 10),
+        );
+      } else {
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    } else {
+      if (_totalPicks < 3) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Please pick at least 3 activities to finish setup',
+              style: GoogleFonts.hankenGrotesk(),
+            ),
+            backgroundColor: const Color(0xFF2D2D2D),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        _submitForm();
+      }
+    }
+  }
+
+  Widget _buildNavigationFooter() {
+    final isLast = _currentPageIndex == _totalSteps - 1;
+    final ready = _totalPicks >= 3;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF131317),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border(
+          top: BorderSide(
+            color: Colors.white.withValues(alpha: 0.10),
+            width: 1.0,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 20,
+            offset: const Offset(0, -6),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.fromLTRB(
+        24,
+        14,
+        24,
+        MediaQuery.of(context).padding.bottom > 0
+            ? MediaQuery.of(context).padding.bottom + 4
+            : 16,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Previous button
+          InkWell(
+            onTap: _handleBack,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.chevron_left_rounded,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Previous',
+                    style: GoogleFonts.hankenGrotesk(
+                      color: const Color(0xFFD0D0D0),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Pagination Dots (matches screenshot)
           AnimatedBuilder(
             animation: _pageController,
             builder: (context, _) {
-              final page = _pageValue;
               return Row(
+                mainAxisSize: MainAxisSize.min,
                 children: List.generate(_totalSteps, (i) {
-                  final fraction = ((page + 1) - i).clamp(0.0, 1.0);
-                  return Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        right: i == _totalSteps - 1 ? 0 : 8,
-                      ),
-                      child: _ProgressSegment(fraction: fraction),
+                  final isActive = _currentPageIndex == i;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeInOut,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: isActive ? 26 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: isActive ? _accent : const Color(0xFF4A4A4E),
+                      borderRadius: BorderRadius.circular(4),
                     ),
                   );
                 }),
               );
             },
+          ),
+
+          // Continue / Submit button
+          InkWell(
+            onTap: _handleContinue,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_isSaving)
+                    const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: _accent,
+                      ),
+                    )
+                  else
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: (isLast && !ready) ? Colors.white38 : Colors.white,
+                      size: 26,
+                    ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isLast ? 'Submit' : 'Continue',
+                    style: GoogleFonts.hankenGrotesk(
+                      color: (isLast && !ready)
+                          ? Colors.white38
+                          : const Color(0xFFD0D0D0),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -432,203 +536,200 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
   Widget _buildNameStep() {
     return Form(
       key: _page1FormKey,
-      child: SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 18),
-              Text(
-                "LET'S GET STARTED",
-                style: GoogleFonts.anybody(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: _accent,
-                  letterSpacing: 1.0,
-                ),
-              ),
-              const SizedBox(height: 4),
-              RichText(
-                text: TextSpan(
-                  style: GoogleFonts.anybody(
-                    fontSize: 42,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: -1.0,
-                    height: 1.1,
-                  ),
-                  children: const [
-                    TextSpan(
-                      text: 'HEY, ',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    TextSpan(
-                      text: 'TRYBER',
-                      style: TextStyle(color: _accent),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                "Tell us a little about you.",
-                style: GoogleFonts.hankenGrotesk(
-                  color: const Color(0xFFA0A0A0),
-                  fontSize: 15,
-                ),
-              ),
-              const SizedBox(height: 30),
-              TextFormField(
-                controller: firstNameController,
-                style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                decoration: _buildInputDecoration(
-                  labelText: 'First Name',
-                  prefixIcon: Icons.person_rounded,
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your first name';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: lastNameController,
-                style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                decoration: _buildInputDecoration(
-                  labelText: 'Last Name',
-                  prefixIcon: Icons.person_rounded,
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your last name';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              InkWell(
-                onTap: () => _selectDate(context),
-                borderRadius: BorderRadius.circular(16),
-                child: IgnorePointer(
-                  child: TextFormField(
-                    controller: dobController,
-                    style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                    decoration: _buildInputDecoration(
-                      labelText: 'Date of Birth',
-                      prefixIcon: Icons.cake_rounded,
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your date of birth';
-                      }
-                      return null;
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(height: 36),
-              ElevatedButton(
-                onPressed: _goToGenderStep,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _accent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  shape: const StadiumBorder(),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'Next',
-                      style: GoogleFonts.hankenGrotesk(
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.bold,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: IntrinsicHeight(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Spacer(flex: 2),
+
+                      Text(
+                        "LET'S GET STARTED",
+                        style: GoogleFonts.anybody(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: _accent,
+                          letterSpacing: 1.0,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      RichText(
+                        text: TextSpan(
+                          style: GoogleFonts.anybody(
+                            fontSize: 42,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: -1.0,
+                            height: 1.1,
+                          ),
+                          children: const [
+                            TextSpan(
+                              text: 'HEY,\n',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            TextSpan(
+                              text: 'TRYBER',
+                              style: TextStyle(color: _accent),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        "Tell us a little about you.",
+                        style: GoogleFonts.hankenGrotesk(
+                          color: const Color(0xFFA0A0A0),
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+
+                      // Text boxes together with the header
+                      TextFormField(
+                        controller: firstNameController,
+                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                        decoration: _buildInputDecoration(
+                          labelText: 'First Name',
+                          prefixIcon: Icons.person_rounded,
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter your first name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: lastNameController,
+                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                        decoration: _buildInputDecoration(
+                          labelText: 'Last Name',
+                          prefixIcon: Icons.person_rounded,
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter your last name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      InkWell(
+                        onTap: () => _selectDate(context),
+                        borderRadius: BorderRadius.circular(32),
+                        child: IgnorePointer(
+                          child: TextFormField(
+                            controller: dobController,
+                            style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                            decoration: _buildInputDecoration(
+                              labelText: 'Date of Birth',
+                              prefixIcon: Icons.cake_rounded,
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your date of birth';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                      ),
+
+                      const Spacer(flex: 3),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 20),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
-    ),
     );
   }
 
   Widget _buildGenderStep() {
-    return SafeArea(
-      top: false,
-      child: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 18),
-            Text(
-              "TAILOR THE EXPERIENCE",
-              style: GoogleFonts.anybody(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: _accent,
-                letterSpacing: 1.0,
-              ),
-            ),
-            const SizedBox(height: 4),
-            RichText(
-              text: TextSpan(
-                style: GoogleFonts.anybody(
-                  fontSize: 34,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -1.0,
-                  height: 1.2,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: IntrinsicHeight(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Spacer(flex: 2),
+
+                    Text(
+                      "TAILOR THE EXPERIENCE",
+                      style: GoogleFonts.anybody(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: _accent,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    RichText(
+                      text: TextSpan(
+                        style: GoogleFonts.anybody(
+                          fontSize: 34,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: -1.0,
+                          height: 1.2,
+                        ),
+                        children: const [
+                          TextSpan(
+                            text: 'HELP US ',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          TextSpan(
+                            text: 'TAILOR IT',
+                            style: TextStyle(color: _accent),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      "Pick what best describes you — we'll tune your plan around it.",
+                      style: GoogleFonts.hankenGrotesk(
+                        color: const Color(0xFFA0A0A0),
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    _buildGenderCard(
+                      'Male',
+                      'Optimized for men',
+                      'Male',
+                      Icons.male_rounded,
+                    ),
+                    _buildGenderCard(
+                      'Female',
+                      'Optimized for women',
+                      'Female',
+                      Icons.female_rounded,
+                    ),
+
+                    const Spacer(flex: 3),
+                  ],
                 ),
-                children: const [
-                  TextSpan(
-                    text: 'HELP US ',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  TextSpan(
-                    text: 'TAILOR IT',
-                    style: TextStyle(color: _accent),
-                  ),
-                ],
               ),
             ),
-            const SizedBox(height: 14),
-            Text(
-              "Pick what best describes you — we'll tune your plan around it.",
-              style: GoogleFonts.hankenGrotesk(
-                color: const Color(0xFFA0A0A0),
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 34),
-            _buildGenderCard(
-              'Male',
-              'Optimized for men',
-              'Male',
-              Icons.male_rounded,
-            ),
-            _buildGenderCard(
-              'Female',
-              'Optimized for women',
-              'Female',
-              Icons.female_rounded,
-            ),
-            const SizedBox(height: 40),
-          ],
-        ),
-      ),
-    ),
+          ),
+        );
+      },
     );
   }
 
@@ -645,483 +746,305 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
     });
   }
 
-  void _removePick(String label) {
-    HapticFeedback.selectionClick();
-    setState(() {
-      selectedActivities.remove(label);
-      selectedSports.remove(label);
-    });
+
+  static const List<_PrefItem> _gridActivities = [
+    _PrefItem('Cycling', Icons.pedal_bike_rounded),
+    _PrefItem('Gym & Weightlifting', Icons.fitness_center_rounded),
+    _PrefItem('Trail Running', Icons.terrain_rounded),
+    _PrefItem('Swimming', Icons.pool_rounded),
+    _PrefItem('Yoga & Mobility', Icons.self_improvement_rounded),
+    _PrefItem('Hiking', Icons.hiking_rounded),
+    _PrefItem('Walking', Icons.directions_walk_rounded),
+    _PrefItem('Calisthenics', Icons.accessibility_new_rounded),
+    _PrefItem('Rock Climbing', Icons.terrain_rounded),
+    _PrefItem('Boxing', Icons.sports_mma_rounded),
+    _PrefItem('Football/Soccer', Icons.sports_soccer_rounded),
+    _PrefItem('Basketball', Icons.sports_basketball_rounded),
+    _PrefItem('Tennis', Icons.sports_tennis_rounded),
+    _PrefItem('Badminton', Icons.sports_tennis_rounded),
+    _PrefItem('Cricket', Icons.sports_cricket_rounded),
+    _PrefItem('Martial Arts', Icons.sports_martial_arts_rounded),
+    _PrefItem('Pilates', Icons.accessibility_rounded),
+    _PrefItem('Rowing', Icons.rowing_rounded),
+    _PrefItem('Golf', Icons.sports_golf_rounded),
+  ];
+
+  Widget _buildFeaturedRunningCard() {
+    final isSel = selectedActivities.contains('Running');
+    return GestureDetector(
+      onTap: () => _togglePref('Running'),
+      child: Container(
+        height: 92,
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: isSel
+                ? [
+                    _accent.withValues(alpha: 0.28),
+                    const Color(0xFF221614),
+                  ]
+                : [
+                    const Color(0xFF222228),
+                    const Color(0xFF141418),
+                  ],
+          ),
+          border: Border.all(
+            color: isSel ? _accent : Colors.white.withValues(alpha: 0.08),
+            width: isSel ? 2 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            // Background subtle athletic runner pattern
+            Positioned(
+              right: -10,
+              top: -10,
+              bottom: -10,
+              child: Opacity(
+                opacity: 0.12,
+                child: const Icon(
+                  Icons.directions_run_rounded,
+                  size: 130,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            // Foreground Badge & Title matching screenshot
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: isSel
+                          ? _accent.withValues(alpha: 0.3)
+                          : Colors.white.withValues(alpha: 0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.directions_run_rounded,
+                      color: isSel ? _accent : const Color(0xFFFF7A50),
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Text(
+                    'RUNNING',
+                    style: GoogleFonts.anybody(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.0,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (isSel)
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: _accent,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPreferenceStep() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: CustomScrollView(
-            controller: _prefScrollController,
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(child: _buildPrefHero()),
-              SliverToBoxAdapter(child: _buildPicksTray()),
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildPrefSection(_activityGroups[index]),
-                  childCount: _activityGroups.length,
-                ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 180)),
-            ],
-          ),
-        ),
-        _buildPrefBottomBar(),
-      ],
-    );
-  }
-
-  Widget _buildPrefHero() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "BUILD YOUR MIX",
-            style: GoogleFonts.anybody(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: _accent,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 4),
-          RichText(
-            text: TextSpan(
-              style: GoogleFonts.anybody(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                letterSpacing: -1.0,
-                height: 1.15,
-              ),
-              children: const [
-                TextSpan(
-                  text: 'WHAT ',
-                  style: TextStyle(color: Colors.white),
-                ),
-                TextSpan(
-                  text: 'MOVES YOU',
-                  style: TextStyle(color: _accent),
-                ),
-                TextSpan(
-                  text: '?',
-                  style: TextStyle(color: Colors.white),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Choose the activities you love to connect with people sharing similar interests.',
-            style: GoogleFonts.hankenGrotesk(
-              color: const Color(0xFFA0A0A0),
-              fontSize: 14.5,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Live tray of everything picked so far — the anchor of the whole screen.
-  Widget _buildPicksTray() {
-    final picks = [...selectedActivities, ...selectedSports];
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.topCenter,
-      child: picks.isEmpty
-          ? const SizedBox.shrink()
-          : Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(24, 18, 24, 0),
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              decoration: BoxDecoration(
-                color: _accent.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: _accent.withValues(alpha: 0.28)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.bolt, size: 16, color: _accent),
-                      const SizedBox(width: 6),
-                      Text(
-                        'YOUR MIX · ${picks.length}',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: _accent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: () {
-                          HapticFeedback.selectionClick();
-                          setState(() {
-                            selectedActivities.clear();
-                            selectedSports.clear();
-                          });
-                        },
-                        child: Text(
-                          'Clear all',
-                          style: GoogleFonts.hankenGrotesk(
-                            color: const Color(0xFFA0A0A0),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: picks
-                        .map(
-                          (p) => GestureDetector(
-                            onTap: () => _removePick(p),
-                            child: Container(
-                              padding: const EdgeInsets.fromLTRB(12, 7, 8, 7),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.45),
-                                borderRadius: BorderRadius.circular(30),
-                                border: Border.all(
-                                  color: _accent.withValues(alpha: 0.35),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    p,
-                                    style: GoogleFonts.hankenGrotesk(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 5),
-                                  const Icon(
-                                    Icons.close_rounded,
-                                    size: 14,
-                                    color: Color(0xFFA0A0A0),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                  ),
-                ],
-              ),
-            ),
-    );
-  }
-
-  Widget _buildToggleTriggerChip({
-    required bool isExpanded,
-    required int remainingCount,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isExpanded ? Colors.white24 : _accent.withValues(alpha: 0.4),
-            width: 1.2,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isExpanded ? Icons.remove_circle_outline_rounded : Icons.add_circle_outline_rounded,
-              size: 16,
-              color: isExpanded ? Colors.white54 : _accent,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              isExpanded ? 'Show Less' : '+$remainingCount More...',
-              style: GoogleFonts.hankenGrotesk(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: isExpanded ? Colors.white70 : _accent,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPrefSection(_PrefGroup group) {
-    final count = group.items.where((i) => selectedActivities.contains(i.label)).length;
-    final isDistance = group.title.contains('Distance-Based');
-    final isExpanded = isDistance ? _expandDistance : _expandLocation;
-
-    final visibleItems = isExpanded ? group.items : group.items.take(5).toList();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 22),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Section Header Row
-          Row(
+        // 1. Header (exact title texts kept)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(group.icon, size: 17, color: _accent),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    group.title.toUpperCase(),
-                    style: GoogleFonts.anybody(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    isDistance ? 'GPS Required' : 'GPS Used for Presence',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: const Color(0xFFFF5722).withValues(alpha: 0.7),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Container(
-                  height: 1,
-                  color: Colors.white.withValues(alpha: 0.07),
-                ),
-              ),
-              const SizedBox(width: 10),
               Text(
-                count > 0 ? '$count picked' : '${group.items.length}',
-                style: GoogleFonts.hankenGrotesk(
-                  color: count > 0 ? _accent : Colors.white24,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+                "BUILD YOUR MIX",
+                style: GoogleFonts.anybody(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.bold,
+                  color: _accent,
+                  letterSpacing: 1.0,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          // Chips Wrap
-          Wrap(
-            spacing: 9,
-            runSpacing: 9,
-            children: [
-              ...visibleItems.map(
-                (item) => _buildPrefChip(
-                  item,
-                  selectedActivities.contains(item.label),
-                  () => _togglePref(item.label),
-                ),
-              ),
-              // More/Less trigger chip
-              _buildToggleTriggerChip(
-                isExpanded: isExpanded,
-                remainingCount: group.items.length - 5,
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  setState(() {
-                    if (isDistance) {
-                      _expandDistance = !_expandDistance;
-                    } else {
-                      _expandLocation = !_expandLocation;
-                    }
-                  });
-                },
-              ),
-            ],
-          ),
-          if (!isExpanded) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Icon(
-                  Icons.info_outline_rounded,
-                  size: 13,
-                  color: Colors.white30,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  "We offer more activities — tap '+${group.items.length - 5} More' to explore them.",
-                  style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white30,
-                    fontSize: 11.5,
+              const SizedBox(height: 2),
+              RichText(
+                text: TextSpan(
+                  style: GoogleFonts.anybody(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -1.0,
+                    height: 1.15,
                   ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPrefChip(_PrefItem item, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(
-          gradient: selected
-              ? const LinearGradient(colors: [_accentLight, _accent])
-              : null,
-          color: selected ? null : const Color(0xFF161618),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: selected
-                ? const Color(0xFFFF8A65)
-                : Colors.white.withValues(alpha: 0.08),
-            width: 1.2,
-          ),
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: _accent.withValues(alpha: 0.34),
-                    blurRadius: 14,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : const [],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              item.icon,
-              size: 16,
-              color: selected ? Colors.black : Colors.white54,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              item.label,
-              style: GoogleFonts.hankenGrotesk(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-                color: selected ? Colors.black : Colors.white,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-
-
-  Widget _buildPrefBottomBar() {
-    final total = _totalPicks;
-    final ready = total > 0;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.92),
-            Colors.black,
-          ],
-          stops: const [0.0, 0.35, 1.0],
-        ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    total == 0
-                        ? 'Select interests to connect with others'
-                        : '$total interests selected',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: total > 0 ? _accent : const Color(0xFFA0A0A0),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                  children: const [
+                    TextSpan(
+                      text: 'WHAT ',
+                      style: TextStyle(color: Colors.white),
                     ),
-                  ),
+                    TextSpan(
+                      text: 'MOVES YOU',
+                      style: TextStyle(color: _accent),
+                    ),
+                    TextSpan(
+                      text: '?',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: (ready && !_isSaving) ? _submitForm : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _accent,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: const Color(0xFF232326),
-                  disabledForegroundColor: Colors.white38,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 17),
-                  shape: const StadiumBorder(),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Choose the activities you love to connect with others.',
+                style: GoogleFonts.hankenGrotesk(
+                  color: const Color(0xFFA0A0A0),
+                  fontSize: 13,
                 ),
-                child: _isSaving
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.2,
-                          color: Colors.white,
+              ),
+            ],
+          ),
+        ),
+
+        // 2. Featured Top Banner Card (Running)
+        _buildFeaturedRunningCard(),
+
+        // 3. Grid of Activities with Scroller (non-scrollable page, scrollable grid)
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: RawScrollbar(
+              controller: _prefScrollController,
+              thumbVisibility: true,
+              thickness: 3.5,
+              radius: const Radius.circular(3),
+              thumbColor: const Color(0xFF48484E),
+              child: GridView.builder(
+                controller: _prefScrollController,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.only(top: 4, bottom: 8, right: 6),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                  childAspectRatio: 1.22,
+                ),
+                itemCount: _gridActivities.length,
+                itemBuilder: (context, index) {
+                  final item = _gridActivities[index];
+                  final isSel = selectedActivities.contains(item.label);
+                  return GestureDetector(
+                    onTap: () => _togglePref(item.label),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: isSel
+                            ? _accent.withValues(alpha: 0.12)
+                            : const Color(0xFF19191D),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: isSel
+                              ? _accent
+                              : Colors.white.withValues(alpha: 0.05),
+                          width: isSel ? 1.8 : 1.0,
                         ),
-                      )
-                    : Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Submit',
-                            style: GoogleFonts.hankenGrotesk(
-                              fontSize: 16.5,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Icon(
+                                item.icon,
+                                color: isSel ? _accent : const Color(0xFFFF7A50),
+                                size: 24,
+                              ),
+                              if (isSel)
+                                const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: _accent,
+                                  size: 18,
+                                ),
+                            ],
                           ),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.arrow_forward_rounded, size: 19),
+                          Text(
+                            item.label,
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              height: 1.2,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ],
                       ),
+                    ),
+                  );
+                },
               ),
             ),
-          ],
+          ),
         ),
-      ),
+
+        // 4. Counter matching screenshot: 0 SELECTED •••
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                '${selectedActivities.length} SELECTED',
+                style: GoogleFonts.hankenGrotesk(
+                  color: selectedActivities.isNotEmpty
+                      ? _accent
+                      : const Color(0xFFA0A0A0),
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '• • •',
+                style: TextStyle(
+                  color: selectedActivities.isNotEmpty
+                      ? _accent
+                      : const Color(0xFF48484E),
+                  fontSize: 12,
+                  letterSpacing: 2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1131,47 +1054,28 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      extendBodyBehindAppBar: true,
       resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        toolbarHeight: 60,
-        automaticallyImplyLeading: false,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 10),
-          child: IconButton(
-            icon: const Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: Colors.white,
-            ),
-            onPressed: _handleBack,
-          ),
-        ),
-      ),
       body: Stack(
         children: [
-          const Positioned.fill(child: FitrybeBackground()),
-          Column(
-            children: [
-              SafeArea(
-                bottom: false,
-                child: _buildProgressHeader(),
-              ),
-              const SizedBox(height: 6),
-              Expanded(
-                child: PageView(
-                  controller: _pageController,
-                  physics: const NeverScrollableScrollPhysics(),
-                  children: [
-                    _buildNameStep(),
-                    _buildGenderStep(),
-                    _buildPreferenceStep(),
-                  ],
+          const Positioned.fill(child: FitrybeBackground(isSubtle: true)),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                Expanded(
+                  child: PageView(
+                    controller: _pageController,
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      _buildNameStep(),
+                      _buildGenderStep(),
+                      _buildPreferenceStep(),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                _buildNavigationFooter(),
+              ],
+            ),
           ),
         ],
       ),
@@ -1193,64 +1097,26 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: _card,
-      contentPadding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
+      contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 22),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(32),
         borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(32),
         borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(32),
         borderSide: const BorderSide(color: _accent, width: 1.5),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(32),
         borderSide: const BorderSide(color: Colors.redAccent, width: 1.0),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(32),
         borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
-      ),
-    );
-  }
-}
-
-
-
-class _ProgressSegment extends StatelessWidget {
-  final double fraction;
-  const _ProgressSegment({required this.fraction});
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        height: 6,
-        color: Colors.white.withValues(alpha: 0.08),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: FractionallySizedBox(
-            widthFactor: fraction.clamp(0.0, 1.0),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(4),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFFFF5722), Color(0xCCFF5722)],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFFF5722).withValues(alpha: 0.5),
-                    blurRadius: 8,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

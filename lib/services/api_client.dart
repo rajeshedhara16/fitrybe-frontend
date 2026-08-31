@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,22 +15,36 @@ class ApiClient {
   static const String _tokenKey = 'fitrybe_access_token';
   static const String _refreshTokenKey = 'fitrybe_refresh_token';
 
-  /// Override at build time for physical devices / staging:
-  /// `flutter run --dart-define=FITRYBE_API_HOST=192.168.1.50`
+  /// Production deployed backend host on Railway
+  static const String _productionHost =
+      'https://fitrybe-backend-production.up.railway.app';
+  static const String _localHostAndroid = 'http://127.0.0.1:4000';
+  static const String _localHostDefault = 'http://localhost:4000';
+
+  /// Override at build time:
+  /// `flutter run --dart-define=FITRYBE_API_HOST=production` or `192.168.1.50`
   static const String _hostOverride =
       String.fromEnvironment('FITRYBE_API_HOST', defaultValue: '');
 
+  String? _resolvedOrigin;
+
+  String get _defaultLocalHost =>
+      defaultTargetPlatform == TargetPlatform.android
+          ? _localHostAndroid
+          : _localHostDefault;
+
   /// Host origin (no `/api` suffix) — also used to resolve `/uploads/...` media.
   String get origin {
+    if (_resolvedOrigin != null) return _resolvedOrigin!;
     if (_hostOverride.isNotEmpty) {
+      if (_hostOverride == 'production' || _hostOverride == 'prod') {
+        return _productionHost;
+      }
       return _hostOverride.startsWith('http')
           ? _hostOverride
           : 'http://$_hostOverride:4000';
     }
-    if (kIsWeb) return 'http://localhost:4000';
-    // 127.0.0.1:4000 routes via adb reverse tcp:4000 tcp:4000 for physical devices & local host
-    if (Platform.isAndroid) return 'http://127.0.0.1:4000';
-    return 'http://localhost:4000';
+    return _productionHost;
   }
 
   String get baseUrl => '$origin/api';
@@ -85,7 +98,36 @@ class ApiClient {
     return map;
   }
 
-  Uri _uri(String endpoint) => Uri.parse('$baseUrl$endpoint');
+  Uri _uriFor(String base, String endpoint) => Uri.parse('$base/api$endpoint');
+
+  /// Executes request against primary host; if network/DNS lookup fails, seamlessly falls back.
+  Future<http.Response> _execute(
+    String endpoint,
+    Future<http.Response> Function(Uri uri) req,
+  ) async {
+    final primary = origin;
+    try {
+      final res = await req(_uriFor(primary, endpoint));
+      _resolvedOrigin = primary;
+      return res;
+    } catch (e) {
+      // If primary host fails with network/socket/DNS error, try fallback host
+      final fallback =
+          primary == _productionHost ? _defaultLocalHost : _productionHost;
+      if (_hostOverride.isEmpty ||
+          _hostOverride == 'production' ||
+          _hostOverride == 'prod') {
+        try {
+          final res = await req(_uriFor(fallback, endpoint));
+          _resolvedOrigin = fallback;
+          return res;
+        } catch (_) {
+          // If fallback fails too, rethrow original error
+        }
+      }
+      rethrow;
+    }
+  }
 
   /// Runs [send], and if the access token has expired, refreshes it once and
   /// replays the request with the new credentials.
@@ -102,31 +144,40 @@ class ApiClient {
   }
 
   Future<http.Response> get(String endpoint) =>
-      _withRefresh(() => http.get(_uri(endpoint), headers: _headers));
+      _withRefresh(() => _execute(endpoint, (uri) => http.get(uri, headers: _headers)));
 
   Future<http.Response> post(String endpoint, {Map<String, dynamic>? body}) =>
-      _withRefresh(() => http.post(
-            _uri(endpoint),
-            headers: _headers,
-            body: body != null ? jsonEncode(body) : null,
+      _withRefresh(() => _execute(
+            endpoint,
+            (uri) => http.post(
+              uri,
+              headers: _headers,
+              body: body != null ? jsonEncode(body) : null,
+            ),
           ));
 
   Future<http.Response> put(String endpoint, {Map<String, dynamic>? body}) =>
-      _withRefresh(() => http.put(
-            _uri(endpoint),
-            headers: _headers,
-            body: body != null ? jsonEncode(body) : null,
+      _withRefresh(() => _execute(
+            endpoint,
+            (uri) => http.put(
+              uri,
+              headers: _headers,
+              body: body != null ? jsonEncode(body) : null,
+            ),
           ));
 
   Future<http.Response> patch(String endpoint, {Map<String, dynamic>? body}) =>
-      _withRefresh(() => http.patch(
-            _uri(endpoint),
-            headers: _headers,
-            body: body != null ? jsonEncode(body) : null,
+      _withRefresh(() => _execute(
+            endpoint,
+            (uri) => http.patch(
+              uri,
+              headers: _headers,
+              body: body != null ? jsonEncode(body) : null,
+            ),
           ));
 
   Future<http.Response> delete(String endpoint) =>
-      _withRefresh(() => http.delete(_uri(endpoint), headers: _headers));
+      _withRefresh(() => _execute(endpoint, (uri) => http.delete(uri, headers: _headers)));
 
   Future<http.Response> multipartPost(
     String endpoint, {
@@ -142,8 +193,8 @@ class ApiClient {
       }
     }
 
-    Future<http.Response> send() async {
-      final request = http.MultipartRequest('POST', _uri(endpoint));
+    Future<http.Response> sendWithUri(Uri uri) async {
+      final request = http.MultipartRequest('POST', uri);
       if (_accessToken != null && _accessToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_accessToken';
       }
@@ -162,26 +213,33 @@ class ApiClient {
       return http.Response.fromStream(streamed);
     }
 
-    return _withRefresh(send);
+    return _withRefresh(() => _execute(endpoint, sendWithUri));
   }
 
   Future<bool> refreshToken() async {
     if (_refreshToken == null) return false;
     try {
-      final res = await http.post(
-        _uri('/auth/refresh'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refreshToken': _refreshToken}),
+      final res = await _execute(
+        '/auth/refresh',
+        (uri) => http.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'refreshToken': _refreshToken}),
+        ),
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        await saveTokens(data['accessToken'], data['refreshToken']);
-        return true;
+        final newAccess = data['accessToken'] as String?;
+        final newRefresh = data['refreshToken'] as String?;
+        if (newAccess != null) {
+          await saveTokens(newAccess, newRefresh ?? _refreshToken!);
+          return true;
+        }
       }
-    } catch (e) {
-      debugPrint('ApiClient token refresh error: $e');
+      await clearTokens();
+      return false;
+    } catch (_) {
+      return false;
     }
-    await clearTokens();
-    return false;
   }
 }

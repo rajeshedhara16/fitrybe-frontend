@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
+import '../services/socket_service.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 
@@ -54,6 +55,20 @@ class _CliqueTabState extends State<CliqueTab>
     )..repeat(reverse: true);
     _loadSessions();
     _loadOrbit();
+    _listenForLobbyChanges();
+  }
+
+  /// Refreshes the session list when a lobby changes or a host starts one, so
+  /// participant counts and LIVE/UPCOMING placement stay current.
+  void _listenForLobbyChanges() {
+    final socket = SocketService();
+    socket.connect();
+    socket.on('clique:lobby_updated', _onRemoteCliqueChange);
+    socket.on('clique:started', _onRemoteCliqueChange);
+  }
+
+  void _onRemoteCliqueChange(dynamic _) {
+    if (mounted) _loadSessions();
   }
 
   Future<void> _loadSessions() async {
@@ -205,6 +220,9 @@ class _CliqueTabState extends State<CliqueTab>
     }
     final coveredKm = bestMeters / 1000;
     final hour12 = scheduled.hour % 12 == 0 ? 12 : scheduled.hour % 12;
+    final counts = (session['counts'] is Map)
+        ? Map<String, dynamic>.from(session['counts'])
+        : const <String, dynamic>{};
 
     return {
       'id': '${session['id']}',
@@ -217,8 +235,13 @@ class _CliqueTabState extends State<CliqueTab>
       'progressText': targetKm > 0
           ? '${coveredKm.toStringAsFixed(1)} / ${targetKm.toStringAsFixed(1)} KM'
           : '${coveredKm.toStringAsFixed(1)} KM',
-      'participantsCount': participants.length,
-      'maxParticipants': participants.length,
+      // Server-computed so every device agrees on the figures.
+      'participantsCount': (counts['joinedCount'] as num?)?.toInt() ??
+          participants.length,
+      'maxParticipants': (counts['participantCount'] as num?)?.toInt() ??
+          participants.length,
+      'readyCount': (counts['readyCount'] as num?)?.toInt() ?? 0,
+      'invitedCount': (counts['invitedCount'] as num?)?.toInt() ?? 0,
       'dateDay': '${scheduled.day}',
       'dateMonth': _monthLabels[scheduled.month - 1],
       'time':
@@ -237,6 +260,9 @@ class _CliqueTabState extends State<CliqueTab>
 
   @override
   void dispose() {
+    SocketService()
+      ..off('clique:lobby_updated')
+      ..off('clique:started');
     _liveBlinkController.dispose();
     _orbitFloatController.dispose();
     super.dispose();

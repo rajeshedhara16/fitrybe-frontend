@@ -74,8 +74,15 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   double _activeDistance = 0.0;
   int _activeCalories = 0;
   int _activeHeartRate = 142;
-  final bool _currentUserIsAdmin = true;
   bool _isSheetMinimized = false;
+
+  /// True only for the athlete who created the session — they alone can invite
+  /// and start. Derived from the server record, never assumed.
+  bool _currentUserIsAdmin = false;
+
+  /// Whether the signed-in user has accepted their invite (is in the lobby).
+  bool _hasJoined = false;
+  bool _isTogglingReady = false;
 
   // Leaderboard filter
   String _selectedMetricFilter = 'DISTANCE';
@@ -83,6 +90,11 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   // Squad participants for Leaderboard & Lobby, loaded from the session.
   List<Map<String, dynamic>> _squadMembers = [];
   bool _isSquadLoading = true;
+
+  /// Counts the server computes, so every device shows the same figures.
+  int _joinedCount = 0;
+  int _readyCount = 0;
+  int _invitedCount = 0;
 
   @override
   void initState() {
@@ -115,6 +127,17 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     socket.emit('clique:join', id);
     socket.on('clique:telemetry_update', _onTelemetry);
     socket.on('clique:status_updated', _onStatusUpdated);
+    // The server re-broadcasts the whole roster after any lobby change, so
+    // squad membership, ready flags and counts stay identical on every device.
+    socket.on('clique:lobby_updated', _onLobbyUpdated);
+  }
+
+  void _onLobbyUpdated(dynamic data) {
+    if (data is! Map || !mounted) return;
+    final session = data['session'];
+    if (session is! Map) return;
+    if ('${session['id']}' != widget.sessionId) return;
+    _applySession(Map<String, dynamic>.from(session));
   }
 
   void _onTelemetry(dynamic data) {
@@ -136,8 +159,36 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
   void _onStatusUpdated(dynamic data) {
     if (data is! Map || !mounted) return;
-    if ('${data['status']}'.toUpperCase() == 'LIVE') {
+    if ('${data['sessionId'] ?? widget.sessionId}' != widget.sessionId) return;
+    final status = '${data['status']}'.toUpperCase();
+
+    if (status == 'LIVE') {
       setState(() => _isUpcoming = false);
+      // The host pressed Start — everyone in the lobby begins tracking now.
+      if (!_isRecording && !_currentUserIsAdmin && _hasJoined) {
+        setState(() {
+          _isRecording = true;
+          _isPaused = false;
+        });
+        _startTimer();
+        HapticFeedback.heavyImpact();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: _accent,
+            content: Text(
+              'The host started the activity — go!',
+              style: GoogleFonts.hankenGrotesk(
+                  color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        );
+      }
+    } else if (status == 'COMPLETED') {
+      _stopwatchTimer?.cancel();
+      setState(() {
+        _isRecording = false;
+        _isPaused = false;
+      });
     }
   }
 
@@ -160,9 +211,47 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       if (mounted) setState(() => _isSquadLoading = false);
       return;
     }
+    _applySession(session);
+  }
 
+  /// Single place that maps a server session onto this screen's state, used by
+  /// both the initial fetch and every live `clique:lobby_updated` push.
+  void _applySession(Map<String, dynamic> session) {
     final myId = SessionService().userId;
     final participants = (session['participants'] as List?) ?? const [];
+    final counts = (session['counts'] is Map)
+        ? Map<String, dynamic>.from(session['counts'])
+        : const <String, dynamic>{};
+
+    final members = participants.whereType<Map>().map((raw) {
+      final p = Map<String, dynamic>.from(raw);
+      final user = (p['user'] is Map)
+          ? Map<String, dynamic>.from(p['user'])
+          : const <String, dynamic>{};
+      final userId = '${p['userId'] ?? user['id'] ?? ''}';
+      final isYou = userId == myId;
+      final name =
+          '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+      final status = '${p['status'] ?? 'JOINED'}'.toUpperCase();
+
+      return {
+        'id': userId,
+        'name': isYou ? 'You' : (name.isEmpty ? 'Athlete' : name),
+        'isAdmin': '${p['role'] ?? ''}'.toUpperCase() == 'HOST',
+        'isYou': isYou,
+        'distance': ((p['currentDistance'] as num?)?.toDouble() ?? 0) / 1000,
+        'pace': _formatPace((p['currentPace'] as num?)?.toDouble() ?? 0),
+        'calories': 0,
+        'heartRate': 0,
+        // Readiness is its own flag now; INVITED members have not accepted yet.
+        'isReady': p['isReady'] == true,
+        'hasJoined': status != 'INVITED',
+        'status': status,
+        'avatar': ApiService.media(user['avatarUrl'] as String?),
+      };
+    }).toList();
+
+    final me = members.where((m) => m['isYou'] == true).toList();
 
     setState(() {
       _isUpcoming = '${session['status']}'.toUpperCase() != 'LIVE';
@@ -172,45 +261,108 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       final target = (session['targetDistance'] as num?)?.toDouble();
       if (target != null && target > 0) _goalValue = target;
 
-      _squadMembers = participants.whereType<Map>().map((raw) {
-        final p = Map<String, dynamic>.from(raw);
-        final user = (p['user'] is Map)
-            ? Map<String, dynamic>.from(p['user'])
-            : const <String, dynamic>{};
-        final userId = '${p['userId'] ?? user['id'] ?? ''}';
-        final isYou = userId == myId;
-        final name =
-            '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+      _currentUserIsAdmin = '${session['creatorId'] ?? ''}' == myId;
+      _hasJoined = me.isNotEmpty && me.first['hasJoined'] == true;
 
-        return {
-          'id': userId,
-          'name': isYou ? 'You' : (name.isEmpty ? 'Athlete' : name),
-          'isAdmin': '${p['role'] ?? ''}'.toUpperCase() == 'HOST',
-          'isYou': isYou,
-          'distance': ((p['currentDistance'] as num?)?.toDouble() ?? 0) / 1000,
-          'pace': _formatPace((p['currentPace'] as num?)?.toDouble() ?? 0),
-          'calories': 0,
-          'heartRate': 0,
-          'isReady': '${p['status'] ?? ''}'.toUpperCase() != 'INVITED',
-          'status': '${p['status'] ?? 'JOINED'}',
-          'avatar': ApiService.media(user['avatarUrl'] as String?),
-        };
-      }).toList();
+      _squadMembers = members;
+      _joinedCount = (counts['joinedCount'] as num?)?.toInt() ??
+          members.where((m) => m['hasJoined'] == true).length;
+      _readyCount = (counts['readyCount'] as num?)?.toInt() ??
+          members.where((m) => m['isReady'] == true).length;
+      _invitedCount = (counts['invitedCount'] as num?)?.toInt() ??
+          members.where((m) => m['hasJoined'] != true).length;
       _isSquadLoading = false;
     });
+  }
+
+  /// Persists the caller's ready flag; the server broadcasts the new roster.
+  Future<void> _toggleReady() async {
+    final id = widget.sessionId;
+    if (id == null || _isTogglingReady) return;
+
+    final me = _squadMembers.where((m) => m['isYou'] == true).toList();
+    final next = !(me.isNotEmpty && me.first['isReady'] == true);
+
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _isTogglingReady = true;
+      if (me.isNotEmpty) me.first['isReady'] = next;
+    });
+
+    final ok = await ApiService.setCliqueReady(id, next);
+    if (!mounted) return;
+    setState(() => _isTogglingReady = false);
+    if (!ok) {
+      // Fall back to the server's view if the toggle was rejected.
+      _loadSession();
+    }
   }
 
   @override
   void dispose() {
     SocketService()
       ..off('clique:telemetry_update')
-      ..off('clique:status_updated');
+      ..off('clique:status_updated')
+      ..off('clique:lobby_updated');
     if (widget.sessionId != null) {
       SocketService().emit('clique:leave', widget.sessionId);
     }
     _pulseController.dispose();
     _stopwatchTimer?.cancel();
     super.dispose();
+  }
+
+  /// Host-only. Warns when part of the lobby has not marked ready, but never
+  /// blocks the start — one idle member should not hold up the squad.
+  Future<void> _confirmAndStartActivity() async {
+    if (_isStarting || !_currentUserIsAdmin) return;
+
+    final notReady = _joinedCount - _readyCount;
+    if (notReady > 0) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: _cardBg,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'Start anyway?',
+            style: GoogleFonts.anybody(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: Text(
+            notReady == 1
+                ? '1 of $_joinedCount in the lobby has not marked ready yet.'
+                : '$notReady of $_joinedCount in the lobby have not marked ready yet.',
+            style: GoogleFonts.hankenGrotesk(
+                color: Colors.white70, fontSize: 14, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Wait',
+                  style: GoogleFonts.hankenGrotesk(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _accent,
+                shape: const StadiumBorder(),
+              ),
+              child: Text('Start now',
+                  style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true) return;
+    }
+
+    _triggerStartActivity();
   }
 
   void _triggerStartActivity() {
@@ -238,13 +390,10 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           _isRecording = true;
           _isPaused = false;
         });
-        // Flip the session to LIVE so the rest of the squad is pulled in.
+        // Flip the session to LIVE. The server fans the change out to the
+        // squad, so there is no client-side relay to trust.
         if (widget.sessionId != null) {
           ApiService.updateCliqueStatus(widget.sessionId!, 'LIVE');
-          SocketService().emit('clique:status_change', {
-            'sessionId': widget.sessionId,
-            'status': 'LIVE',
-          });
         }
         _startTimer();
       }
@@ -998,11 +1147,14 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                   ),
                 ),
                 const SizedBox(width: 6),
+                // Live counts, kept in step by `clique:lobby_updated`.
                 Text(
-                  '(${_squadMembers.length}/8)',
+                  _invitedCount > 0
+                      ? '($_readyCount/$_joinedCount ready · $_invitedCount invited)'
+                      : '($_readyCount/$_joinedCount ready)',
                   style: GoogleFonts.hankenGrotesk(
                     color: Colors.white38,
-                    fontSize: 14,
+                    fontSize: 13,
                   ),
                 ),
               ],
@@ -1038,6 +1190,8 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
               (m) => SlidableSquadTile(
                 key: ValueKey(m['id']),
                 member: m,
+                // Only the host can drop someone from the squad.
+                canRemove: _currentUserIsAdmin && m['isYou'] != true,
                 onRemove: () {
                   setState(() {
                     _squadMembers
@@ -1049,48 +1203,80 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
         const SizedBox(height: 24),
 
-        // Start button for Admin vs Ready button for Participant
+        // The host starts the activity; everyone else only sets readiness.
         if (_currentUserIsAdmin)
           if (_isUpcoming)
-            SizedBox(
-              width: double.infinity,
-              height: 56,
-              child: ElevatedButton(
-                onPressed: _showScheduledOptionsModal,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2A2A2D),
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: const StadiumBorder(),
-                  side: BorderSide(color: _accent.withValues(alpha: 0.5)),
+            Column(
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _showScheduledOptionsModal,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2A2A2D),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                      side: BorderSide(color: _accent.withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.schedule_rounded, color: _accent, size: 20),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'SCHEDULED FOR $_scheduledTime',
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.schedule_rounded, color: _accent, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      'SCHEDULED FOR $_scheduledTime',
+                const SizedBox(height: 12),
+                // A scheduled session can still be started early by the host.
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _isStarting ? null : _confirmAndStartActivity,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _accent,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: _accent.withValues(alpha: 0.4),
+                      elevation: 0,
+                      shape: const StadiumBorder(),
+                    ),
+                    child: Text(
+                      _startButtonText,
                       style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white,
-                        fontSize: 14.5,
+                        fontSize: 16,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0.5,
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             )
           else
             SizedBox(
               width: double.infinity,
               height: 56,
               child: ElevatedButton(
-                onPressed: _triggerStartActivity,
+                onPressed: _isStarting ? null : _confirmAndStartActivity,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _accent,
                   foregroundColor: Colors.white,
+                  disabledBackgroundColor: _accent.withValues(alpha: 0.4),
                   elevation: 0,
                   shape: const StadiumBorder(),
                 ),
@@ -1107,50 +1293,70 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         else ...[
           Builder(
             builder: (context) {
-              final userMember = _squadMembers.firstWhere(
-                (m) => m['isYou'] == true,
-                orElse: () => _squadMembers[0],
-              );
-              final bool isUserReady = userMember['isReady'] as bool;
-              return SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: () {
-                    HapticFeedback.heavyImpact();
-                    setState(() {
-                      userMember['isReady'] = !isUserReady;
-                    });
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isUserReady
-                        ? Colors.redAccent
-                        : Colors.green,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: const StadiumBorder(),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        isUserReady
-                            ? Icons.cancel_outlined
-                            : Icons.check_circle_outline_rounded,
-                        size: 22,
+              final me = _squadMembers.where((m) => m['isYou'] == true).toList();
+              final bool isUserReady =
+                  me.isNotEmpty && me.first['isReady'] == true;
+
+              return Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed:
+                          (!_hasJoined || _isTogglingReady) ? null : _toggleReady,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            isUserReady ? Colors.redAccent : Colors.green,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: const Color(0xFF2A2A2D),
+                        disabledForegroundColor: Colors.white38,
+                        elevation: 0,
+                        shape: const StadiumBorder(),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        isUserReady ? 'CANCEL READY' : 'I\'M READY',
-                        style: GoogleFonts.hankenGrotesk(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ],
+                      child: _isTogglingReady
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2.2, color: Colors.white),
+                            )
+                          : Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  isUserReady
+                                      ? Icons.cancel_outlined
+                                      : Icons.check_circle_outline_rounded,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  isUserReady ? 'CANCEL READY' : "I'M READY",
+                                  style: GoogleFonts.hankenGrotesk(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  // Only the host can start, so say so rather than showing a
+                  // button that would be rejected.
+                  Text(
+                    _isUpcoming
+                        ? 'Waiting for the host to start the activity'
+                        : 'The activity is live — join in when you are ready',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white38,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
               );
             },
           ),
@@ -1881,10 +2087,13 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 class SlidableSquadTile extends StatefulWidget {
   final Map<String, dynamic> member;
   final VoidCallback onRemove;
+  /// Only the host may swipe a member out of the squad.
+  final bool canRemove;
   const SlidableSquadTile({
     super.key,
     required this.member,
     required this.onRemove,
+    this.canRemove = false,
   });
 
   @override
@@ -1897,14 +2106,17 @@ class _SlidableSquadTileState extends State<SlidableSquadTile> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isReady = widget.member['isReady'] as bool;
+    final bool isReady = widget.member['isReady'] as bool? ?? false;
     final bool isAdmin = widget.member['isAdmin'] as bool? ?? false;
+    final bool hasJoined = widget.member['hasJoined'] as bool? ?? true;
     final String name = widget.member['name'] as String;
-    if (isAdmin) {
+    // The host row and anyone the viewer cannot remove render as a plain tile.
+    if (isAdmin || !widget.canRemove) {
       return _buildTileContent(
         name,
         isReady,
         isAdmin,
+        hasJoined,
         margin: const EdgeInsets.only(bottom: 10),
       );
     }
@@ -1971,6 +2183,7 @@ class _SlidableSquadTileState extends State<SlidableSquadTile> {
                 name,
                 isReady,
                 isAdmin,
+                hasJoined,
                 margin: EdgeInsets.zero,
               ),
             ),
@@ -1983,7 +2196,8 @@ class _SlidableSquadTileState extends State<SlidableSquadTile> {
   Widget _buildTileContent(
     String name,
     bool isReady,
-    bool isAdmin, {
+    bool isAdmin,
+    bool hasJoined, {
     EdgeInsetsGeometry? margin,
   }) {
     return Container(
@@ -2060,28 +2274,31 @@ class _SlidableSquadTileState extends State<SlidableSquadTile> {
               ),
             ],
           ),
-          Container(
+          Builder(builder: (context) {
+            final Color pillColor = !hasJoined
+                ? Colors.white38
+                : (isReady ? Colors.green : Colors.orange);
+            return Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: isReady
-                  ? Colors.green.withValues(alpha: 0.15)
-                  : Colors.orange.withValues(alpha: 0.15),
+              color: pillColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: isReady
-                    ? Colors.green.withValues(alpha: 0.4)
-                    : Colors.orange.withValues(alpha: 0.4),
-              ),
+              border: Border.all(color: pillColor.withValues(alpha: 0.4)),
             ),
             child: Text(
-              isReady ? 'READY' : 'NOT READY',
+              !hasJoined
+                  ? 'INVITED'
+                  : (isReady ? 'READY' : 'NOT READY'),
               style: GoogleFonts.hankenGrotesk(
-                color: isReady ? Colors.greenAccent : Colors.orangeAccent,
+                color: !hasJoined
+                    ? Colors.white54
+                    : (isReady ? Colors.greenAccent : Colors.orangeAccent),
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
             ),
-          ),
+          );
+          }),
         ],
       ),
     );

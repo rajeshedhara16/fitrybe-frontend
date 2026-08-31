@@ -335,9 +335,11 @@ class ApiService {
     return _ensureOk(res)['session'] as Map<String, dynamic>?;
   }
 
-  static Future<bool> joinClique(String sessionId) async {
+  /// Accepts an invite and enters the lobby. Throws [ApiException] with the
+  /// server's reason when the session is invite-only or already finished.
+  static Future<void> joinClique(String sessionId) async {
     final res = await _client.post('/cliques/$sessionId/join');
-    return res.statusCode < 300;
+    _ensureOk(res);
   }
 
   static Future<bool> leaveClique(String sessionId) async {
@@ -348,6 +350,13 @@ class ApiService {
   static Future<bool> inviteToClique(String sessionId, String userId) async {
     final res = await _client
         .post('/cliques/$sessionId/invite', body: {'userId': userId});
+    return res.statusCode < 300;
+  }
+
+  /// Sets the caller's lobby readiness for a clique session.
+  static Future<bool> setCliqueReady(String sessionId, bool isReady) async {
+    final res = await _client
+        .patch('/cliques/$sessionId/ready', body: {'isReady': isReady});
     return res.statusCode < 300;
   }
 

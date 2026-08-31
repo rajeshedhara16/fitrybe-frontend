@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'home_screen.dart';
@@ -9,14 +10,33 @@ import '../services/session_service.dart';
 /// Surfaces backend auth failures (bad credentials, duplicate email,
 /// unreachable server) instead of leaving the button silently idle.
 void _showAuthError(BuildContext context, Object error) {
-  final message = error is ApiException
-      ? error.message
-      : 'Could not reach Fitrybe. Check your connection and try again.';
+  debugPrint('AUTH ERROR DETAILS: $error');
+  final String message;
+  if (error is ApiException) {
+    message = error.message;
+  } else if (error is Exception) {
+    final str = error.toString();
+    message = str.startsWith('Exception: ') ? str.substring(11) : str;
+  } else {
+    message = error.toString();
+  }
+
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text(message, style: GoogleFonts.hankenGrotesk()),
-      backgroundColor: const Color(0xFF2D2D2D),
+      content: Text(
+        message,
+        style: GoogleFonts.hankenGrotesk(
+          color: Colors.white,
+          fontSize: 13.5,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      backgroundColor: const Color(0xFF252528),
       behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.15)),
+      ),
     ),
   );
 }
@@ -75,6 +95,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Scaffold(
       backgroundColor: Colors.black,
       extendBodyBehindAppBar: true,
@@ -92,233 +114,304 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             const Positioned.fill(child: FitrybeBackground()),
             SafeArea(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 20),
-                      Text(
-                        'WELCOME BACK',
-                        style: GoogleFonts.anybody(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFFFF5722),
-                          letterSpacing: 1.0,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      RichText(
-                        text: TextSpan(
-                          style: GoogleFonts.anybody(
-                            fontSize: 42,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: -1.0,
-                            height: 1.1,
-                          ),
-                          children: const [
-                            TextSpan(
-                              text: 'SIGN ',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            TextSpan(
-                              text: 'IN',
-                              style: TextStyle(color: Color(0xFFFF5722)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        "Sign in to connect with your tribe and track your daily targets.",
-                        style: GoogleFonts.hankenGrotesk(
-                          color: const Color(0xFFA0A0A0),
-                          fontSize: 15,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 36),
-
-                      // Email Input
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                        decoration: _buildInputDecoration(
-                          labelText: 'Email',
-                          prefixIcon: Icons.mail_rounded,
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your email';
-                          }
-                          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
-                            return 'Please enter a valid email address';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Password Input
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                        decoration: _buildInputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: Icons.lock_rounded,
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                              color: const Color(0xFFA0A0A0),
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your password';
-                          }
-                          if (value.length < 6) {
-                            return 'Password must be at least 6 characters';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Forgot Password link
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {},
-                          child: Text(
-                            'Forgot Password?',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: const Color(0xFFFF5722),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-
-                      // Login Button (Solid Orange Capsule)
-                      ElevatedButton(
-                        onPressed: _isLoading ? null : _handleLogin,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF5722),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 18),
-                          shape: const StadiumBorder(),
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                              )
-                            : Text(
-                                'Login',
-                                style: GoogleFonts.hankenGrotesk(
-                                  fontSize: 16,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    physics: isKeyboardOpen
+                        ? const ClampingScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                      child: IntrinsicHeight(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 22.0, vertical: 8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const SizedBox(height: 4),
+                              Text(
+                                'WELCOME BACK',
+                                style: GoogleFonts.anybody(
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold,
+                                  color: const Color(0xFFFF5722),
+                                  letterSpacing: 1.0,
                                 ),
                               ),
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Divider: Or continue with
-                      Row(
-                        children: [
-                          const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                            child: Text(
-                              'Or continue with',
-                              style: GoogleFonts.hankenGrotesk(
-                                color: const Color(0x66FFFFFF),
-                                fontSize: 14,
+                              const SizedBox(height: 4),
+                              RichText(
+                                text: TextSpan(
+                                  style: GoogleFonts.anybody(
+                                    fontSize: 38,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: -0.5,
+                                    height: 1.1,
+                                  ),
+                                  children: const [
+                                    TextSpan(
+                                      text: 'SIGN ',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                    TextSpan(
+                                      text: 'IN',
+                                      style: TextStyle(color: Color(0xFFFF5722)),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ),
-                          const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
-                        ],
-                      ),
-                      const SizedBox(height: 28),
+                              const SizedBox(height: 8),
+                              Text(
+                                "Sign in to connect with your tribe and track your daily targets.",
+                                style: GoogleFonts.hankenGrotesk(
+                                  color: const Color(0xFFA0A0A0),
+                                  fontSize: 14.5,
+                                  height: 1.35,
+                                ),
+                              ),
 
-                      // Google Button (Wide Center Outlined Stadium Button)
-                      OutlinedButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const UserDetailsScreen()),
-                          );
-                        },
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: const StadiumBorder(),
-                          backgroundColor: const Color(0x1AFFFFFF),
+                              const Spacer(flex: 1),
+
+                              // Glassmorphism Container Card
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(26),
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          Colors.white.withValues(alpha: 0.12),
+                                          const Color(0xFF14141A).withValues(alpha: 0.45),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(26),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.45),
+                                          blurRadius: 30,
+                                          offset: const Offset(0, 12),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        // Email Label & Input
+                                        Text(
+                                          'Email',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            color: const Color(0xFFE2E2E2),
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _emailController,
+                                          keyboardType: TextInputType.emailAddress,
+                                          style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                                          decoration: _buildInputDecoration(
+                                            hintText: 'Enter your email',
+                                            prefixIcon: Icons.mail_rounded,
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.isEmpty) {
+                                              return 'Please enter your email';
+                                            }
+                                            if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                                              return 'Please enter a valid email address';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 16),
+
+                                        // Password Label & Input
+                                        Text(
+                                          'Password',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            color: const Color(0xFFE2E2E2),
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _passwordController,
+                                          obscureText: _obscurePassword,
+                                          style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                                          decoration: _buildInputDecoration(
+                                            hintText: 'Enter your password',
+                                            prefixIcon: Icons.lock_rounded,
+                                            suffixIcon: IconButton(
+                                              icon: Icon(
+                                                _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                                                color: const Color(0xFFA0A0A0),
+                                              ),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _obscurePassword = !_obscurePassword;
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.isEmpty) {
+                                              return 'Please enter your password';
+                                            }
+                                            if (value.length < 6) {
+                                              return 'Password must be at least 6 characters';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 6),
+
+                                        // Forgot Password link
+                                        Align(
+                                          alignment: Alignment.centerRight,
+                                          child: TextButton(
+                                            onPressed: () {},
+                                            style: TextButton.styleFrom(
+                                              padding: const EdgeInsets.symmetric(vertical: 4),
+                                              minimumSize: Size.zero,
+                                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            ),
+                                            child: Text(
+                                              'Forgot Password?',
+                                              style: GoogleFonts.hankenGrotesk(
+                                                color: const Color(0xFFFF5722),
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 13.5,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 18),
+
+                                        // Login Button (Solid Orange Capsule)
+                                        ElevatedButton(
+                                          onPressed: _isLoading ? null : _handleLogin,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFFFF5722),
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(vertical: 16),
+                                            shape: const StadiumBorder(),
+                                          ),
+                                          child: _isLoading
+                                              ? const SizedBox(
+                                                  width: 22,
+                                                  height: 22,
+                                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                                                )
+                                              : Text(
+                                                  'Login',
+                                                  style: GoogleFonts.hankenGrotesk(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                        ),
+                                        const SizedBox(height: 18),
+
+                                        // Divider: Or continue with
+                                        Row(
+                                          children: [
+                                            const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                              child: Text(
+                                                'Or continue with',
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  color: const Color(0x66FFFFFF),
+                                                  fontSize: 13.5,
+                                                ),
+                                              ),
+                                            ),
+                                            const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 16),
+
+                                        // Google Button (Wide Center Outlined Stadium Button)
+                                        OutlinedButton(
+                                          onPressed: () {
+                                            Navigator.push(
+                                              context,
+                                              MaterialPageRoute(builder: (context) => const UserDetailsScreen()),
+                                            );
+                                          },
+                                          style: OutlinedButton.styleFrom(
+                                            side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
+                                            padding: const EdgeInsets.symmetric(vertical: 15),
+                                            shape: const StadiumBorder(),
+                                            backgroundColor: const Color(0x1AFFFFFF),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Image.asset('assets/images/google.png', width: 20, height: 20),
+                                              const SizedBox(width: 12),
+                                              Text(
+                                                'Login with google',
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const Spacer(flex: 1),
+
+                              // Don't have an account Link
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    "Don't have an account? ",
+                                    style: GoogleFonts.hankenGrotesk(
+                                      color: const Color(0x80FFFFFF),
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  GestureDetector(
+                                    onTap: () {
+                                      Navigator.pushReplacement(
+                                        context,
+                                        MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                                      );
+                                    },
+                                    child: Text(
+                                      'Register',
+                                      style: GoogleFonts.hankenGrotesk(
+                                        color: const Color(0xFFFF5722),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Image.asset('assets/images/google.png', width: 22, height: 22),
-                            const SizedBox(width: 12),
-                            Text(
-                              'Login with google',
-                              style: GoogleFonts.hankenGrotesk(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
                       ),
-                      const SizedBox(height: 40),
-
-                      // Don't have an account Link
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            "Don't have an account? ",
-                            style: GoogleFonts.hankenGrotesk(
-                              color: const Color(0x80FFFFFF),
-                              fontSize: 14,
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(builder: (context) => const RegisterScreen()),
-                              );
-                            },
-                            child: Text(
-                              'Register',
-                              style: GoogleFonts.hankenGrotesk(
-                                color: const Color(0xFFFF5722),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -380,6 +473,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+
     return Scaffold(
       backgroundColor: Colors.black,
       extendBodyBehindAppBar: true,
@@ -397,243 +492,318 @@ class _RegisterScreenState extends State<RegisterScreen> {
           children: [
             const Positioned.fill(child: FitrybeBackground()),
             SafeArea(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 10),
-                      Text(
-                        'JOIN THE TRYBE',
-                        style: GoogleFonts.anybody(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFFFF5722),
-                          letterSpacing: 1.0,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      RichText(
-                        text: TextSpan(
-                          style: GoogleFonts.anybody(
-                            fontSize: 42,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: -1.0,
-                            height: 1.1,
-                          ),
-                          children: const [
-                            TextSpan(
-                              text: 'CREATE ',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            TextSpan(
-                              text: 'ACCOUNT',
-                              style: TextStyle(color: Color(0xFFFF5722)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        "Thank you for joining our fitrybe community — let's get you set up.",
-                        style: GoogleFonts.hankenGrotesk(
-                          color: const Color(0xFFA0A0A0),
-                          fontSize: 15,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 36),
-
-                      // Email Input
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                        decoration: _buildInputDecoration(
-                          labelText: 'Email',
-                          prefixIcon: Icons.mail_rounded,
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your email';
-                          }
-                          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
-                            return 'Please enter a valid email address';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Password Input
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                        decoration: _buildInputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: Icons.lock_rounded,
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                              color: const Color(0xFFA0A0A0),
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your password';
-                          }
-                          if (value.length < 6) {
-                            return 'Password must be at least 6 characters';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Confirm Password Input
-                      TextFormField(
-                        controller: _confirmPasswordController,
-                        obscureText: _obscureConfirmPassword,
-                        style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                        decoration: _buildInputDecoration(
-                          labelText: 'Confirm Password',
-                          prefixIcon: Icons.lock_rounded,
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
-                              color: const Color(0xFFA0A0A0),
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscureConfirmPassword = !_obscureConfirmPassword;
-                              });
-                            },
-                          ),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please confirm your password';
-                          }
-                          if (value != _passwordController.text) {
-                            return 'Passwords do not match';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 36),
-
-                      // Create Account Button (Solid Orange Capsule)
-                      ElevatedButton(
-                        onPressed: _isLoading ? null : _handleRegister,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFFF5722),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 18),
-                          shape: const StadiumBorder(),
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
-                              )
-                            : Text(
-                                'Create Account',
-                                style: GoogleFonts.hankenGrotesk(
-                                  fontSize: 16,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    physics: isKeyboardOpen
+                        ? const ClampingScrollPhysics()
+                        : const NeverScrollableScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                      child: IntrinsicHeight(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 22.0, vertical: 8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const SizedBox(height: 4),
+                              Text(
+                                'JOIN THE TRYBE',
+                                style: GoogleFonts.anybody(
+                                  fontSize: 14,
                                   fontWeight: FontWeight.bold,
+                                  color: const Color(0xFFFF5722),
+                                  letterSpacing: 1.0,
                                 ),
                               ),
-                      ),
-                      const SizedBox(height: 32),
-
-                      // Divider: Or continue with
-                      Row(
-                        children: [
-                          const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                            child: Text(
-                              'Or continue with',
-                              style: GoogleFonts.hankenGrotesk(
-                                color: const Color(0x66FFFFFF),
-                                fontSize: 14,
+                              const SizedBox(height: 4),
+                              RichText(
+                                text: TextSpan(
+                                  style: GoogleFonts.anybody(
+                                    fontSize: 38,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: -0.5,
+                                    height: 1.1,
+                                  ),
+                                  children: const [
+                                    TextSpan(
+                                      text: 'CREATE ',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
+                                    TextSpan(
+                                      text: 'ACCOUNT',
+                                      style: TextStyle(color: Color(0xFFFF5722)),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ),
-                          const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
-                        ],
-                      ),
-                      const SizedBox(height: 28),
+                              const SizedBox(height: 8),
+                              Text(
+                                "Thank you for joining our fitrybe community — let's get you set up.",
+                                style: GoogleFonts.hankenGrotesk(
+                                  color: const Color(0xFFA0A0A0),
+                                  fontSize: 14.5,
+                                  height: 1.35,
+                                ),
+                              ),
 
-                      // Google Button (Wide Center Outlined Stadium Button)
-                      OutlinedButton(
-                        onPressed: () {},
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: const StadiumBorder(),
-                          backgroundColor: const Color(0x1AFFFFFF),
+                              const Spacer(flex: 1),
+
+                              // Glassmorphism Container Card
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(26),
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          Colors.white.withValues(alpha: 0.12),
+                                          const Color(0xFF14141A).withValues(alpha: 0.45),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(26),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.45),
+                                          blurRadius: 30,
+                                          offset: const Offset(0, 12),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        // Email Label & Input
+                                        Text(
+                                          'Email',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            color: const Color(0xFFE2E2E2),
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _emailController,
+                                          keyboardType: TextInputType.emailAddress,
+                                          style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                                          decoration: _buildInputDecoration(
+                                            hintText: 'Enter your email',
+                                            prefixIcon: Icons.mail_rounded,
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.isEmpty) {
+                                              return 'Please enter your email';
+                                            }
+                                            if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                                              return 'Please enter a valid email address';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 14),
+
+                                        // Password Label & Input
+                                        Text(
+                                          'Password',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            color: const Color(0xFFE2E2E2),
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _passwordController,
+                                          obscureText: _obscurePassword,
+                                          style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                                          decoration: _buildInputDecoration(
+                                            hintText: 'Create a password',
+                                            prefixIcon: Icons.lock_rounded,
+                                            suffixIcon: IconButton(
+                                              icon: Icon(
+                                                _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                                                color: const Color(0xFFA0A0A0),
+                                              ),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _obscurePassword = !_obscurePassword;
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.isEmpty) {
+                                              return 'Please enter your password';
+                                            }
+                                            if (value.length < 6) {
+                                              return 'Password must be at least 6 characters';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 14),
+
+                                        // Confirm Password Label & Input
+                                        Text(
+                                          'Confirm Password',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            color: const Color(0xFFE2E2E2),
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _confirmPasswordController,
+                                          obscureText: _obscureConfirmPassword,
+                                          style: GoogleFonts.hankenGrotesk(color: Colors.white),
+                                          decoration: _buildInputDecoration(
+                                            hintText: 'Confirm your password',
+                                            prefixIcon: Icons.lock_rounded,
+                                            suffixIcon: IconButton(
+                                              icon: Icon(
+                                                _obscureConfirmPassword ? Icons.visibility_off : Icons.visibility,
+                                                color: const Color(0xFFA0A0A0),
+                                              ),
+                                              onPressed: () {
+                                                setState(() {
+                                                  _obscureConfirmPassword = !_obscureConfirmPassword;
+                                                });
+                                              },
+                                            ),
+                                          ),
+                                          validator: (value) {
+                                            if (value == null || value.isEmpty) {
+                                              return 'Please confirm your password';
+                                            }
+                                            if (value != _passwordController.text) {
+                                              return 'Passwords do not match';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 18),
+
+                                        // Create Account Button (Solid Orange Capsule)
+                                        ElevatedButton(
+                                          onPressed: _isLoading ? null : _handleRegister,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFFFF5722),
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(vertical: 16),
+                                            shape: const StadiumBorder(),
+                                          ),
+                                          child: _isLoading
+                                              ? const SizedBox(
+                                                  width: 22,
+                                                  height: 22,
+                                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                                                )
+                                              : Text(
+                                                  'Create Account',
+                                                  style: GoogleFonts.hankenGrotesk(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                        ),
+                                        const SizedBox(height: 16),
+
+                                        // Divider: Or continue with
+                                        Row(
+                                          children: [
+                                            const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                                              child: Text(
+                                                'Or continue with',
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  color: const Color(0x66FFFFFF),
+                                                  fontSize: 13.5,
+                                                ),
+                                              ),
+                                            ),
+                                            const Expanded(child: Divider(color: Color(0xFF2D2D2D))),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 14),
+
+                                        // Google Button (Wide Center Outlined Stadium Button)
+                                        OutlinedButton(
+                                          onPressed: () {},
+                                          style: OutlinedButton.styleFrom(
+                                            side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
+                                            padding: const EdgeInsets.symmetric(vertical: 15),
+                                            shape: const StadiumBorder(),
+                                            backgroundColor: const Color(0x1AFFFFFF),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Image.asset('assets/images/google.png', width: 20, height: 20),
+                                              const SizedBox(width: 12),
+                                              Text(
+                                                'Join with google',
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const Spacer(flex: 1),
+
+                              // Already have an account Link
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Already have an account? ',
+                                    style: GoogleFonts.hankenGrotesk(
+                                      color: const Color(0x80FFFFFF),
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  GestureDetector(
+                                    onTap: () {
+                                      Navigator.pushReplacement(
+                                        context,
+                                        MaterialPageRoute(builder: (context) => const LoginScreen()),
+                                      );
+                                    },
+                                    child: Text(
+                                      'Log in',
+                                      style: GoogleFonts.hankenGrotesk(
+                                        color: const Color(0xFFFF5722),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                          ),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Image.asset('assets/images/google.png', width: 22, height: 22),
-                            const SizedBox(width: 12),
-                            Text(
-                              'Join with google',
-                              style: GoogleFonts.hankenGrotesk(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
                       ),
-                      const SizedBox(height: 40),
-
-                      // Already have an account Link
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Already have an account? ',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: const Color(0x80FFFFFF),
-                              fontSize: 14,
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                              );
-                            },
-                            child: Text(
-                              'Log in',
-                              style: GoogleFonts.hankenGrotesk(
-                                color: const Color(0xFFFF5722),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -644,21 +814,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
 }
 
 InputDecoration _buildInputDecoration({
-  required String labelText,
+  String? hintText,
+  String? labelText,
   required IconData prefixIcon,
   Widget? suffixIcon,
 }) {
   return InputDecoration(
+    hintText: hintText,
+    hintStyle: GoogleFonts.hankenGrotesk(
+      color: const Color(0x66FFFFFF),
+      fontSize: 14,
+    ),
     labelText: labelText,
     labelStyle: GoogleFonts.hankenGrotesk(
       color: const Color(0x99FFFFFF),
-      fontSize: 15,
+      fontSize: 14.5,
     ),
-    prefixIcon: Icon(prefixIcon, color: Colors.white, size: 22),
+    prefixIcon: Icon(prefixIcon, color: Colors.white70, size: 21),
     suffixIcon: suffixIcon,
     filled: true,
-    fillColor: const Color(0xFF1C1C1E),
-    contentPadding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
+    fillColor: const Color(0xFF131317).withValues(alpha: 0.65),
+    contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 18),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
       borderSide: BorderSide.none,
@@ -683,7 +859,8 @@ InputDecoration _buildInputDecoration({
 }
 
 class FitrybeBackground extends StatefulWidget {
-  const FitrybeBackground({super.key});
+  final bool isSubtle;
+  const FitrybeBackground({super.key, this.isSubtle = false});
 
   @override
   State<FitrybeBackground> createState() => _FitrybeBackgroundState();
@@ -738,6 +915,11 @@ class _FitrybeBackgroundState extends State<FitrybeBackground> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final primaryAlpha = widget.isSubtle ? 0.10 : 0.35;
+    final secondaryAlpha = widget.isSubtle ? 0.08 : 0.28;
+    final randomAlpha = widget.isSubtle ? _alpha * 0.35 : _alpha;
+
     return Stack(
       children: [
         // 1. Deep custom color background fill (pure black)
@@ -752,7 +934,45 @@ class _FitrybeBackgroundState extends State<FitrybeBackground> {
           ),
         ),
 
-        // 3. Randomized Radial Glow
+        // 3. Dynamic ambient glow orb behind the glass card (primary warm FitRybe tone)
+        Positioned(
+          top: size.height * 0.26,
+          right: -50,
+          child: Container(
+            width: 320,
+            height: 320,
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                colors: [
+                  Color(0xFFFF5722).withValues(alpha: primaryAlpha),
+                  const Color(0xFFFF5722).withValues(alpha: 0.0),
+                ],
+                stops: const [0.0, 0.75],
+              ),
+            ),
+          ),
+        ),
+
+        // 4. Secondary ambient glow orb behind the glass card (vibrant amber / coral)
+        Positioned(
+          bottom: size.height * 0.18,
+          left: -50,
+          child: Container(
+            width: 280,
+            height: 280,
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                colors: [
+                  Color(0xFFFE6A2B).withValues(alpha: secondaryAlpha),
+                  const Color(0xFFFE6A2B).withValues(alpha: 0.0),
+                ],
+                stops: const [0.0, 0.75],
+              ),
+            ),
+          ),
+        ),
+
+        // 5. Randomized Atmospheric Radial Glow
         Positioned(
           top: _top,
           bottom: _bottom,
@@ -764,7 +984,7 @@ class _FitrybeBackgroundState extends State<FitrybeBackground> {
             decoration: BoxDecoration(
               gradient: RadialGradient(
                 colors: [
-                  const Color(0xFFFF5722).withValues(alpha: _alpha),
+                  Color(0xFFFF5722).withValues(alpha: randomAlpha),
                   const Color(0xFFFF5722).withValues(alpha: 0.0),
                 ],
                 stops: [0.0, _radialStop],

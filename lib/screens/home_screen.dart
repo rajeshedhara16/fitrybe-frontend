@@ -24,6 +24,7 @@ import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../services/health_service.dart';
 import '../services/session_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 import 'package:share_plus/share_plus.dart';
@@ -69,6 +70,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     SocketService().connect();
+    // Seeds the notifications badge and keeps it live while the app is open.
+    NotificationService().start();
     _loadBackendFeed();
     _loadSuggestedUsers();
     _loadAnalytics();
@@ -2019,13 +2022,17 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(child: _buildNavItem(1, Symbols.group_rounded, 'Trybes')),
           Expanded(child: _buildNavItem(2, Symbols.directions_run_rounded, 'Activity')),
           Expanded(child: _buildNavItem(3, Symbols.monitor_heart_rounded, 'Clique')),
-          Expanded(child: _buildNavItem(4, Symbols.notifications_rounded, 'Notification')),
+          Expanded(
+            child: _buildNavItem(4, Symbols.notifications_rounded, 'Notification',
+                showBadge: true),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildNavItem(int index, IconData icon, String label) {
+  Widget _buildNavItem(int index, IconData icon, String label,
+      {bool showBadge = false}) {
     final active = _currentNavIndex == index;
     final inactive = Colors.white.withValues(alpha: 0.45);
 
@@ -2041,14 +2048,51 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 24,
-              fill: 1.0,
-              weight: 700,
-              grade: 200,
-              opticalSize: 24,
-              color: active ? Colors.white : inactive,
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  icon,
+                  size: 24,
+                  fill: 1.0,
+                  weight: 700,
+                  grade: 200,
+                  opticalSize: 24,
+                  color: active ? Colors.white : inactive,
+                ),
+                if (showBadge)
+                  Positioned(
+                    top: -4,
+                    right: -6,
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: NotificationService().unreadCount,
+                      builder: (context, count, _) {
+                        if (count <= 0) return const SizedBox.shrink();
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          constraints: const BoxConstraints(minWidth: 17),
+                          decoration: BoxDecoration(
+                            color: _accent,
+                            borderRadius: BorderRadius.circular(9),
+                            border: Border.all(
+                                color: const Color(0xFF131316), width: 1.5),
+                          ),
+                          child: Text(
+                            count > 99 ? '99+' : '$count',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.bold,
+                              height: 1.3,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
             ),
           ],
         ),

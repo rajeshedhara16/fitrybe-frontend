@@ -80,6 +80,19 @@ class AppTheme {
           ).copyWith(inherit: true),
         ),
       ),
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: const Color(0xFF252528),
+        contentTextStyle: GoogleFonts.hankenGrotesk(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: Color(0xFF353438)),
+        ),
+      ),
     );
   }
 }
