@@ -1,16 +1,16 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'subscription_screen.dart';
 import '../services/api_service.dart';
 import '../services/achievement_service.dart';
+import '../services/health_service.dart';
+import '../services/location_tracker.dart';
 
 class RecordMapScreen extends StatefulWidget {
   static const routeName = '/RecordMapScreen';
@@ -46,15 +46,31 @@ class _RecordMapScreenState extends State<RecordMapScreen>
   int _elapsedSeconds = 0;
 
   // ── Live metrics ─────────────────────────────────────────────────────────────
-  double _activeDistance = 0.0;
+  /// Kilometres measured by the GPS, never derived from elapsed time.
+  double get _activeDistance => _tracker.distanceKm;
   int _activeCalories = 0;
+
+  /// Last real reading from Health Connect / HealthKit. Zero means "no sensor
+  /// data", and the UI shows `--` rather than inventing a number.
   int _activeHeartRate = 0;
 
   // ── Real GPS & Route tracking ──────────────────────────────────────────────
   final MapController _mapController = MapController();
-  final List<LatLng> _routeLatLngs = [];
-  StreamSubscription<Position>? _positionStreamSub;
+
+  /// Sole source of distance and of the drawn/saved route.
+  final LocationTracker _tracker = LocationTracker();
+
+  /// The route as traced so far, or the single pre-recording fix used to
+  /// centre the map.
+  List<LatLng> get _routeLatLngs =>
+      _tracker.route.isNotEmpty
+          ? _tracker.route
+          : (_realUserLatLng != null ? [_realUserLatLng!] : const []);
+
   LatLng? _realUserLatLng;
+
+  /// Explains an empty distance readout when location is unavailable.
+  String? _locationWarning;
 
   // ── Activity Log ─────────────────────────────────────────────────────────────
   final List<_ActivityLog> _activityLogs = [];
@@ -74,76 +90,17 @@ class _RecordMapScreenState extends State<RecordMapScreen>
 
   @override
   void dispose() {
-    _positionStreamSub?.cancel();
+    _tracker.stop();
     _pulseController.dispose();
     _stopwatchTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _initRealGpsLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return;
-      }
-
-      if (permission == LocationPermission.deniedForever) return;
-
-      final Position pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      );
-
-      if (!mounted) return;
-      final LatLng latLng = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _realUserLatLng = latLng;
-        if (_routeLatLngs.isEmpty) {
-          _routeLatLngs.add(latLng);
-        } else {
-          _routeLatLngs[0] = latLng;
-        }
-      });
-      _mapController.move(latLng, 16.5);
-    } catch (e) {
-      debugPrint('Real GPS fetch error: $e');
-    }
-  }
-
-  void _startRealGpsStream() {
-    _positionStreamSub?.cancel();
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 1,
-    );
-
-    _positionStreamSub = Geolocator.getPositionStream(
-      locationSettings: locationSettings,
-    ).listen((Position pos) {
-      if (!mounted || !_isRecording || _isPaused) return;
-      final LatLng newLoc = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _realUserLatLng = newLoc;
-        if (_routeLatLngs.isNotEmpty) {
-          final double distMeters = Geolocator.distanceBetween(
-            _routeLatLngs.last.latitude,
-            _routeLatLngs.last.longitude,
-            newLoc.latitude,
-            newLoc.longitude,
-          );
-          if (distMeters > 0.5) {
-            _activeDistance += (distMeters / 1000.0);
-            _routeLatLngs.add(newLoc);
-          }
-        } else {
-          _routeLatLngs.add(newLoc);
-        }
-      });
-      _mapController.move(newLoc, 16.5);
-    });
+    final fix = await LocationTracker.currentFix();
+    if (!mounted || fix == null) return;
+    setState(() => _realUserLatLng = fix);
+    _mapController.move(fix, 16.5);
   }
 
   // ── Timer helpers ────────────────────────────────────────────────────────────
@@ -153,22 +110,10 @@ class _RecordMapScreenState extends State<RecordMapScreen>
       if (!mounted || _isPaused) return;
       setState(() {
         _elapsedSeconds++;
-        // Simulate GPS distance ~0.003 km/s ≈ 10.8 km/h
-        _activeDistance += 0.003;
+        // Flat per-second estimate. Distance and the route come from
+        // [_tracker]; nothing here is derived from the clock.
         _activeCalories = (_elapsedSeconds * 0.165).round();
-        _activeHeartRate = 130 + (_elapsedSeconds % 15);
-
-        // Append real GPS coordinate
-        final LatLng lastPos = _routeLatLngs.isEmpty
-            ? const LatLng(28.6139, 77.2090)
-            : _routeLatLngs.last;
-        final double nextLat = lastPos.latitude +
-            0.00004 +
-            (math.sin(_elapsedSeconds * 0.1) * 0.00002);
-        final double nextLng = lastPos.longitude +
-            0.00005 +
-            (math.cos(_elapsedSeconds * 0.12) * 0.00002);
-        _routeLatLngs.add(LatLng(nextLat, nextLng));
+        _activeHeartRate = HealthService().healthNotifier.value.heartRate;
       });
     });
   }
@@ -199,49 +144,62 @@ class _RecordMapScreenState extends State<RecordMapScreen>
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────────
-  void _onStartPressed() {
+  Future<void> _onStartPressed() async {
     HapticFeedback.heavyImpact();
+    _tracker.reset();
     setState(() {
       _isRecording = true;
       _isPaused = false;
       _elapsedSeconds = 0;
-      _activeDistance = 0.0;
       _activeCalories = 0;
-      _activeHeartRate = 135;
-      _routeLatLngs.clear();
-      if (_realUserLatLng != null) {
-        _routeLatLngs.add(_realUserLatLng!);
-      } else {
-        _routeLatLngs.add(const LatLng(28.6139, 77.2090));
-      }
+      _activeHeartRate = 0;
+      _locationWarning = null;
     });
     _startTimer();
-    _startRealGpsStream();
+
+    try {
+      await _tracker.start(onUpdate: () {
+        if (!mounted) return;
+        setState(() {});
+        final here = _tracker.lastPosition;
+        if (here != null) {
+          _realUserLatLng = here;
+          _mapController.move(here, 16.5);
+        }
+      });
+    } on LocationDeniedException catch (e) {
+      if (!mounted) return;
+      setState(() => _locationWarning = e.message);
+    } catch (e) {
+      debugPrint('GPS start error: $e');
+      if (!mounted) return;
+      setState(() =>
+          _locationWarning = 'Distance is unavailable — GPS could not start.');
+    }
   }
 
   void _onPausePressed() {
     HapticFeedback.mediumImpact();
+    _tracker.isPaused = true;
     setState(() => _isPaused = true);
   }
 
   void _onResumePressed() {
     HapticFeedback.mediumImpact();
+    _tracker.isPaused = false;
     setState(() => _isPaused = false);
   }
 
   void _onStopPressed() {
     HapticFeedback.heavyImpact();
-    _positionStreamSub?.cancel();
-    _positionStreamSub = null;
+    _tracker.stop();
 
     final shouldSave = _isRecording && _elapsedSeconds >= 3;
     final durationSeconds = _elapsedSeconds;
-    final distanceKm = _activeDistance;
+    final distanceKm = _tracker.distanceKm;
     final calories = _activeCalories;
     // Snapshot the traced route before the map is reset.
-    final route = _routeLatLngs
-        .map((p) => {'lat': p.latitude, 'lng': p.longitude})
-        .toList();
+    final route = _tracker.routeAsJson();
 
     if (shouldSave) {
       _activityLogs.insert(
@@ -262,13 +220,12 @@ class _RecordMapScreenState extends State<RecordMapScreen>
       _isRecording = false;
       _isPaused = false;
       _elapsedSeconds = 0;
-      _activeDistance = 0.0;
       _activeCalories = 0;
       _activeHeartRate = 0;
-      _routeLatLngs.clear();
-      if (_realUserLatLng != null) {
-        _routeLatLngs.add(_realUserLatLng!);
-      }
+      _locationWarning = null;
+      // Clearing the tracker leaves `_routeLatLngs` showing just the last
+      // known fix, so the map stays centred on the athlete.
+      _tracker.reset();
     });
 
     if (shouldSave) {
@@ -929,6 +886,26 @@ class _RecordMapScreenState extends State<RecordMapScreen>
                   duration: const Duration(milliseconds: 300),
                   firstChild: Column(
                     children: [
+                      if (_locationWarning != null) ...[
+                        Row(
+                          children: [
+                            Icon(Icons.location_off_rounded,
+                                color: _accent, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _locationWarning!,
+                                style: GoogleFonts.hankenGrotesk(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                      ],
                       // Hero Metric Displays: Distance & Duration
                       Row(
                         children: [
@@ -1027,7 +1004,9 @@ class _RecordMapScreenState extends State<RecordMapScreen>
                           Expanded(
                             child: _buildBentoCard(
                               'AVG BPM',
-                              _isRecording ? '$_activeHeartRate' : '--',
+                              _isRecording && _activeHeartRate > 0
+                                  ? '$_activeHeartRate'
+                                  : '--',
                               'bpm',
                             ),
                           ),

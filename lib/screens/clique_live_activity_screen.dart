@@ -1,13 +1,14 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
+import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/socket_service.dart';
 import '../services/achievement_service.dart';
+import '../services/location_tracker.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 
@@ -71,10 +72,22 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   bool _isPaused = false;
   Timer? _stopwatchTimer;
   int _elapsedSeconds = 0;
-  double _activeDistance = 0.0;
+
+  /// Kilometres measured by the GPS, never derived from elapsed time. This is
+  /// what gets broadcast to the squad and saved as the workout.
+  double get _activeDistance => _tracker.distanceKm;
   int _activeCalories = 0;
-  int _activeHeartRate = 142;
+
+  /// Zero means "no sensor reading" — the UI shows `--` rather than a number
+  /// we made up.
+  int _activeHeartRate = 0;
   bool _isSheetMinimized = false;
+
+  /// Sole source of this athlete's distance and route for the session.
+  final LocationTracker _tracker = LocationTracker();
+
+  /// Explains an empty distance readout when location is unavailable.
+  String? _locationWarning;
 
   /// True only for the athlete who created the session — they alone can invite
   /// and start. Derived from the server record, never assumed.
@@ -124,7 +137,8 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     if (id == null) return;
     final socket = SocketService();
     socket.connect();
-    socket.emit('clique:join', id);
+    // joinRoom so the session room survives a reconnect or token refresh.
+    socket.joinRoom('clique:join', id);
     socket.on('clique:telemetry_update', _onTelemetry);
     socket.on('clique:status_updated', _onStatusUpdated);
     // The server re-broadcasts the whole roster after any lobby change, so
@@ -171,6 +185,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           _isPaused = false;
         });
         _startTimer();
+        _beginTracking();
         HapticFeedback.heavyImpact();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -273,6 +288,20 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           members.where((m) => m['hasJoined'] != true).length;
       _isSquadLoading = false;
     });
+
+    // Opening a session that is already running — a late join, or coming back
+    // after backgrounding the app — has to begin tracking too. Without this
+    // the live UI appeared but the clock never started and nothing was
+    // recorded for this athlete.
+    final isLive = '${session['status']}'.toUpperCase() == 'LIVE';
+    if (isLive && _hasJoined && !_isRecording) {
+      setState(() {
+        _isRecording = true;
+        _isPaused = false;
+      });
+      _startTimer();
+      _beginTracking();
+    }
   }
 
   /// Persists the caller's ready flag; the server broadcasts the new roster.
@@ -305,8 +334,10 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       ..off('clique:status_updated')
       ..off('clique:lobby_updated');
     if (widget.sessionId != null) {
-      SocketService().emit('clique:leave', widget.sessionId);
+      SocketService()
+          .leaveRoom('clique:join', 'clique:leave', widget.sessionId!);
     }
+    _tracker.stop();
     _pulseController.dispose();
     _stopwatchTimer?.cancel();
     super.dispose();
@@ -396,6 +427,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           ApiService.updateCliqueStatus(widget.sessionId!, 'LIVE');
         }
         _startTimer();
+        _beginTracking();
       }
     });
   }
@@ -410,37 +442,66 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       if (!_isPaused) {
         setState(() {
           _elapsedSeconds++;
-          _activeDistance += 0.0032;
+          // Flat per-second estimate. Distance comes from the GPS via
+          // [_tracker] and is refreshed by [_beginTracking]'s callback.
           _activeCalories = (_elapsedSeconds * 0.165).toInt();
-          final rand = Random();
-          _activeHeartRate = 140 + rand.nextInt(10);
-
-          // Update the signed-in athlete's row. Other rows move only when
-          // their device sends telemetry over the socket.
-          final myIndex = _squadMembers.indexWhere((m) => m['isYou'] == true);
-          if (myIndex != -1) {
-            _squadMembers[myIndex]['distance'] = _activeDistance;
-            _squadMembers[myIndex]['calories'] = _activeCalories;
-            _squadMembers[myIndex]['heartRate'] = _activeHeartRate;
-            _squadMembers[myIndex]['pace'] = _getPaceString();
-          }
-
-          // Dynamic sort based on chosen metric
-          _sortSquadMembers();
+          _activeHeartRate = HealthService().healthNotifier.value.heartRate;
+          _refreshMyRow();
         });
 
-        // Broadcast our progress to the rest of the squad once per second.
-        if (widget.sessionId != null) {
-          SocketService().emit('clique:telemetry', {
-            'sessionId': widget.sessionId,
-            'distance': _activeDistance * 1000,
-            'calories': _activeCalories,
-            'pace': _activeDistance > 0.01
-                ? (_elapsedSeconds / 60) / _activeDistance
-                : 0,
-          });
-        }
+        // Broadcast our measured progress to the rest of the squad.
+        _broadcastTelemetry();
       }
+    });
+  }
+
+  /// Starts GPS measurement for this athlete's leg of the session. Tracking
+  /// failure downgrades the workout to duration-only rather than falling back
+  /// to invented distance.
+  Future<void> _beginTracking() async {
+    _tracker.reset();
+    if (mounted) setState(() => _locationWarning = null);
+    try {
+      await _tracker.start(onUpdate: () {
+        if (!mounted) return;
+        setState(_refreshMyRow);
+        _broadcastTelemetry();
+      });
+    } on LocationDeniedException catch (e) {
+      if (!mounted) return;
+      setState(() => _locationWarning = e.message);
+    } catch (e) {
+      debugPrint('Clique GPS start error: $e');
+      if (!mounted) return;
+      setState(() =>
+          _locationWarning = 'Distance is unavailable — GPS could not start.');
+    }
+  }
+
+  /// Mirrors this athlete's live figures onto their leaderboard row. Other
+  /// rows move only when their own device sends telemetry over the socket.
+  void _refreshMyRow() {
+    final myIndex = _squadMembers.indexWhere((m) => m['isYou'] == true);
+    if (myIndex != -1) {
+      _squadMembers[myIndex]['distance'] = _activeDistance;
+      _squadMembers[myIndex]['calories'] = _activeCalories;
+      _squadMembers[myIndex]['heartRate'] = _activeHeartRate;
+      _squadMembers[myIndex]['pace'] = _getPaceString();
+    }
+    _sortSquadMembers();
+  }
+
+  void _broadcastTelemetry() {
+    final id = widget.sessionId;
+    if (id == null || !_isRecording) return;
+    final position = _tracker.lastPosition;
+    SocketService().emit('clique:telemetry', {
+      'sessionId': id,
+      if (position != null) 'lat': position.latitude,
+      if (position != null) 'lng': position.longitude,
+      'distance': _tracker.distanceMeters,
+      'calories': _activeCalories,
+      'pace': _tracker.paceMinPerKm(_elapsedSeconds) ?? 0,
     });
   }
 
@@ -458,6 +519,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     HapticFeedback.mediumImpact();
     setState(() {
       _isPaused = !_isPaused;
+      _tracker.isPaused = _isPaused;
     });
   }
 
@@ -471,14 +533,16 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
     try {
       // Save the workout itself, then share it to the feed.
+      final route = _tracker.routeAsJson();
       final activity = await ApiService.logActivity({
         'title': _selectedActivityName,
         'type': _selectedActivityType,
         'duration': _elapsedSeconds,
-        'distance': _activeDistance * 1000,
+        'distance': _tracker.distanceMeters,
         'calories': _activeCalories,
         if (_activeDistance > 0.01)
           'avgPace': (_elapsedSeconds / 60) / _activeDistance,
+        if (route.isNotEmpty) 'routeData': route,
       });
 
       await ApiService.createPost(
@@ -531,7 +595,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   }
 
   String _getPaceString() {
-    if (_activeDistance < 0.01) return "5'30\"";
+    if (_activeDistance < 0.01) return "--'--\"";
     final double totalMinutes = (_elapsedSeconds / 60.0);
     final double minutesPerKm = totalMinutes / _activeDistance;
     final int minPart = minutesPerKm.toInt();
@@ -1550,12 +1614,32 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                           Expanded(
                             child: _buildBentoCard(
                               'AVG BPM',
-                              '$_activeHeartRate',
+                              _activeHeartRate > 0 ? '$_activeHeartRate' : '--',
                               'bpm',
                             ),
                           ),
                         ],
                       ),
+                      if (_locationWarning != null) ...[
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Icon(Icons.location_off_rounded,
+                                color: _accent, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _locationWarning!,
+                                style: GoogleFonts.hankenGrotesk(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       const SizedBox(height: 24),
 
                       // Main Action Control Button

@@ -75,6 +75,12 @@
 	<key>NSCameraUsageDescription</key>
 	<string>fitrybe needs camera access so you can take photos for your posts.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>fitrybe uses your location to tag it in your posts.</string>
+	<string>fitrybe uses your location to record the distance and route of your workouts, and to tag posts.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>fitrybe keeps recording your route while the app is in the background so a workout is not cut short when your screen locks.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 </dict>
 </plist>

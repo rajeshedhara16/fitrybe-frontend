@@ -308,7 +308,11 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                                       final id = await ApiService
                                           .createConversation(
                                               userId: user['id'] as String?);
-                                      if (!mounted || id == null) return;
+                                      if (id == null ||
+                                          !mounted ||
+                                          !sheetCtx.mounted) {
+                                        return;
+                                      }
                                       Navigator.pop(sheetCtx);
                                       _openChat({
                                         'id': id,
@@ -409,7 +413,11 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                                       final id =
                                           await ApiService.createConversation(
                                               trybeId: trybe['id'] as String?);
-                                      if (!mounted || id == null) return;
+                                      if (id == null ||
+                                          !mounted ||
+                                          !sheetCtx.mounted) {
+                                        return;
+                                      }
                                       Navigator.pop(sheetCtx);
                                       _openChat({
                                         'id': id,

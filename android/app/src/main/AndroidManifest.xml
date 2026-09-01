@@ -3,10 +3,13 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <!-- Health Connect Permissions -->
+    <!-- Health Connect Permissions. These must cover every HealthDataType
+         HealthService requests, or those reads fail silently at runtime. -->
     <uses-permission android:name="android.permission.health.READ_STEPS"/>
     <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED"/>
     <uses-permission android:name="android.permission.health.READ_HEART_RATE"/>
+    <uses-permission android:name="android.permission.health.READ_DISTANCE"/>
+    <uses-permission android:name="android.permission.health.READ_EXERCISE"/>
 
     <!-- Photo / Camera -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
@@ -16,6 +19,13 @@
     <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+
+    <!-- Workout tracking runs in a geolocator foreground service so a run keeps
+         recording while the screen is off. This is what lets us avoid asking
+         for ACCESS_BACKGROUND_LOCATION. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <application
         android:label="fitrybe"

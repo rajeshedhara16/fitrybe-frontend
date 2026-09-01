@@ -194,7 +194,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               : Image.network(
                                   _bannerUrl!,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
+                                  errorBuilder: (_, _, _) => Container(
                                       color: _accent.withValues(alpha: 0.35)),
                                 ),
                         ),

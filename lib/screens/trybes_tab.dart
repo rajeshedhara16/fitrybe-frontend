@@ -394,7 +394,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                     : Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
+                        errorBuilder: (_, _, _) =>
                             Container(color: _accent.withValues(alpha: 0.18)),
                       ),
               ),
@@ -674,7 +674,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                                         : Image.network(
                                             grpImage,
                                             fit: BoxFit.cover,
-                                            errorBuilder: (_, __, ___) => Container(
+                                            errorBuilder: (_, _, _) => Container(
                                               color: _accent.withValues(alpha: 0.18),
                                               child: Icon(Icons.groups_rounded,
                                                   color: _accent, size: 22),
@@ -768,7 +768,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                     : Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
+                        errorBuilder: (_, _, _) => Container(
                           color: _accent.withValues(alpha: 0.18),
                           child: Icon(Icons.groups_rounded,
                               color: _accent, size: 22),
@@ -922,7 +922,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                 height: 180,
                 width: double.infinity,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
             ),
           ],
@@ -1320,7 +1320,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                   }
                   // Refresh so the athlete moves into the friends list.
                   _loadFriendsTab();
-                  if (!mounted || !shouldFollow) return;
+                  if (!shouldFollow || !mounted || !context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       backgroundColor: _accent,

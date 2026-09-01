@@ -17,9 +17,7 @@ import 'customize_goal_screen.dart';
 import 'subscription_screen.dart';
 import 'messaging_screen.dart';
 import 'welcome_screen.dart';
-import '../models/post_store.dart';
 import '../services/socket_service.dart';
-import '../services/post_service.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../services/health_service.dart';
@@ -49,6 +47,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String? get _userProfileUrl => SessionService().avatarUrl;
 
   final Set<String> _followedUsers = {};
+
+  /// Users explicitly unfollowed this session, so a server `isFollowing: true`
+  /// does not immediately undo the tap.
+  final Set<String> _unfollowedUsers = {};
   final Set<String> _hiddenUserPostIds = {};
 
   /// Comment threads keyed by post id, filled from the API on demand.
@@ -60,6 +62,13 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+
+  /// Debounced feed search. Athletes come from the API; posts are filtered
+  /// out of the feed already in memory, so typing stays responsive.
+  Timer? _searchDebounce;
+  String _searchQuery = '';
+  List<Map<String, dynamic>> _searchedUsers = [];
+  bool _isSearchLoading = false;
   List<Map<String, dynamic>> _backendPosts = [];
   List<Map<String, dynamic>> _suggestedUsers = [];
   Map<String, dynamic> _analytics = const {};
@@ -87,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadBackendFeed() async {
     if (mounted) setState(() => _feedError = null);
     try {
-      final posts = await PostService().fetchFeed();
+      final posts = await ApiService.getFeed();
       if (!mounted) return;
       setState(() {
         _backendPosts = posts;
@@ -111,9 +120,68 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() => _searchQuery = value.trim());
+    _searchDebounce?.cancel();
+    if (_searchQuery.isEmpty) {
+      setState(() {
+        _searchedUsers = [];
+        _isSearchLoading = false;
+      });
+      return;
+    }
+    setState(() => _isSearchLoading = true);
+    _searchDebounce =
+        Timer(const Duration(milliseconds: 350), _runSearch);
+  }
+
+  Future<void> _runSearch() async {
+    final query = _searchQuery;
+    if (query.isEmpty) return;
+    final users = await ApiService.searchUsers(query, limit: 15);
+    // A slower earlier request must not overwrite newer results.
+    if (!mounted || query != _searchQuery) return;
+    setState(() {
+      _searchedUsers = users;
+      _isSearchLoading = false;
+    });
+  }
+
+  void _closeSearch() {
+    _searchDebounce?.cancel();
+    setState(() {
+      _searchController.clear();
+      _searchQuery = '';
+      _searchedUsers = [];
+      _isSearchLoading = false;
+      _isSearching = false;
+    });
+  }
+
+  /// Feed posts matching the query by caption, author, or location tag.
+  List<Map<String, dynamic>> get _matchingPosts {
+    final needle = _searchQuery.toLowerCase();
+    if (needle.isEmpty) return const [];
+    return _backendPosts.where((p) {
+      if (_hiddenUserPostIds.contains(p['id'])) return false;
+      final author = (p['author'] is Map)
+          ? Map<String, dynamic>.from(p['author'])
+          : const <String, dynamic>{};
+      final haystack = [
+        p['caption'],
+        p['locationTag'],
+        p['type'],
+        author['firstName'],
+        author['lastName'],
+      ].where((v) => v != null).join(' ').toLowerCase();
+      return haystack.contains(needle);
+    }).toList();
   }
 
   @override
@@ -150,12 +218,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         controller: _searchController,
                         focusNode: _searchFocusNode,
                         autofocus: true,
+                        textInputAction: TextInputAction.search,
+                        onChanged: _onSearchChanged,
                         style: GoogleFonts.hankenGrotesk(
                           color: Colors.white,
                           fontSize: 14,
                         ),
                         decoration: InputDecoration(
-                          hintText: 'Search activities, trybes...',
+                          hintText: 'Search athletes and posts...',
                           hintStyle: GoogleFonts.hankenGrotesk(
                             color: Colors.white38,
                             fontSize: 14,
@@ -174,12 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
-                      onPressed: () {
-                        setState(() {
-                          _searchController.clear();
-                          _isSearching = false;
-                        });
-                      },
+                      onPressed: _closeSearch,
                     ),
                     const SizedBox(width: 12),
                   ],
@@ -652,20 +717,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCurrentTab() {
+    // Search takes over the body while it is open, on whichever tab.
+    if (_isSearching && _searchQuery.isNotEmpty) {
+      return _buildSearchResults();
+    }
+
     switch (_currentNavIndex) {
       case 0:
         return RefreshIndicator(
           onRefresh: _loadBackendFeed,
           color: _accent,
           backgroundColor: _cardBg,
-          child: ListenableBuilder(
-            listenable: PostStore.instance,
-            builder: (context, _) {
-              final userPosts = PostStore.instance.posts.where((p) => !_hiddenUserPostIds.contains(p.id)).toList();
+          child: Builder(
+            builder: (context) {
               final visiblePosts = _backendPosts
                   .where((p) => !_hiddenUserPostIds.contains(p['id']))
                   .toList();
-              final hasNoPosts = userPosts.isEmpty && visiblePosts.isEmpty;
 
               return SingleChildScrollView(
                 physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
@@ -686,7 +753,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onRetry: _loadBackendFeed,
                         ),
                       )
-                    else if (hasNoPosts)
+                    else if (visiblePosts.isEmpty)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 40),
                         child: EmptyStateView(
@@ -706,10 +773,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           },
                         ),
                       )
-                    else ...[
-                      ...userPosts.map((post) => _buildDynamicUserPost(post)),
-                      ...visiblePosts.map((bPost) => _buildBackendPostCard(bPost)),
-                    ],
+                    else
+                      ...visiblePosts.map(_buildBackendPostCard),
                     _buildGrowYourTrybeSection(),
                     const SizedBox(height: 100),
                   ],
@@ -1070,7 +1135,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 IconButton(
                   icon: const Icon(Icons.share_outlined, color: Colors.white60, size: 20),
                   onPressed: () {
-                    Share.share('Check out this workout post on Fitrybe! 🏃‍♂️🔥');
+                    SharePlus.instance.share(ShareParams(
+                      text: 'Check out this workout post on Fitrybe! 🏃‍♂️🔥',
+                    ));
                   },
                 ),
               ],
@@ -1210,10 +1277,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-  }
-
-  int _getCommentCount(String postId) {
-    return _postComments[postId]?.length ?? 0;
   }
 
   /// Condenses a timestamp into the "2h ago" style the feed already uses.
@@ -1525,13 +1588,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: Text('Delete Post', style: GoogleFonts.hankenGrotesk(color: Colors.redAccent)),
                     onTap: () {
                       Navigator.pop(context);
-                      PostStore.instance.removePost(postId);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          backgroundColor: _accent,
-                          content: Text('Post deleted.', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                        ),
-                      );
+                      _deletePost(postId);
                     },
                   ),
                 ] else ...[
@@ -1598,14 +1655,21 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Edits a post's caption. The dialog is seeded from the loaded feed entry
+  /// and the change is persisted before the card is refreshed in place.
   void _showEditPostDialog(String postId) {
-    final posts = PostStore.instance.posts;
-    final post = posts.firstWhere((p) => p.id == postId);
-    final controller = TextEditingController(text: post.caption);
+    final post = _backendPosts.firstWhere(
+      (p) => p['id'] == postId,
+      orElse: () => const <String, dynamic>{},
+    );
+    if (post.isEmpty) return;
+
+    final controller =
+        TextEditingController(text: '${post['caption'] ?? ''}');
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: const Color(0xFF1E1E22),
           title: Text(
@@ -1631,27 +1695,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: Text('Cancel', style: GoogleFonts.hankenGrotesk(color: Colors.white54)),
             ),
             ElevatedButton(
               onPressed: () {
-                final newCaption = controller.text.trim();
-                if (newCaption.isNotEmpty) {
-                  PostStore.instance.removePost(postId);
-                  PostStore.instance.addPost(
-                    UserPost(
-                      id: postId,
-                      caption: newCaption,
-                      type: post.type,
-                      audience: post.audience,
-                      locationTag: post.locationTag,
-                      imagePaths: post.imagePaths,
-                      createdAt: post.createdAt,
-                    ),
-                  );
-                }
-                Navigator.pop(context);
+                Navigator.pop(dialogContext);
+                _saveEditedCaption(postId, controller.text.trim());
               },
               style: ElevatedButton.styleFrom(backgroundColor: _accent),
               child: Text('Save', style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -1662,177 +1712,166 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildDynamicUserPost(UserPost post) {
-    final bool isLiked = _likedUserPostIds.contains(post.id);
-    final int likesCount = _userPostLikes[post.id] ?? 0;
+  Future<void> _saveEditedCaption(String postId, String caption) async {
+    if (caption.isEmpty) return;
+    try {
+      final updated = await ApiService.updatePost(postId, caption: caption);
+      if (!mounted || updated == null) return;
+      setState(() {
+        final index = _backendPosts.indexWhere((p) => p['id'] == postId);
+        if (index != -1) _backendPosts[index] = updated;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            e is ApiException ? e.message : 'Could not save your changes.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    }
+  }
 
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+  /// Deletes a post server-side, then drops it from the feed. Previously this
+  /// only removed it from an in-memory store the feed no longer used, so the
+  /// post reported as deleted and came straight back on refresh.
+  Future<void> _deletePost(String postId) async {
+    final ok = await ApiService.deletePost(postId);
+    if (!mounted) return;
+    if (ok) {
+      setState(() => _backendPosts.removeWhere((p) => p['id'] == postId));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: ok ? _accent : _cardBg,
+        content: Text(
+          ok ? 'Post deleted.' : 'Could not delete this post.',
+          style: GoogleFonts.hankenGrotesk(color: Colors.white),
         ),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    );
+  }
+
+  Widget _buildSearchResults() {
+    final posts = _matchingPosts;
+    final users = _searchedUsers;
+
+    if (_isSearchLoading && users.isEmpty && posts.isEmpty) {
+      return const LoadingStateView(message: 'Searching…');
+    }
+
+    if (users.isEmpty && posts.isEmpty) {
+      return EmptyStateView(
+        icon: Icons.search_off_rounded,
+        title: 'Nothing matched',
+        message: 'No athletes or posts found for "$_searchQuery".',
+      );
+    }
+
+    return ListView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 100),
+      children: [
+        if (users.isNotEmpty) ...[
+          _buildSearchSectionHeader('ATHLETES', users.length),
+          ...users.map(_buildSearchUserRow),
+        ],
+        if (posts.isNotEmpty) ...[
+          _buildSearchSectionHeader('POSTS', posts.length),
+          ...posts.map(_buildBackendPostCard),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSearchSectionHeader(String label, int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+      child: Text(
+        '$label · $count',
+        style: GoogleFonts.hankenGrotesk(
+          color: Colors.white38,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchUserRow(Map<String, dynamic> user) {
+    final userId = '${user['id'] ?? ''}';
+    final name =
+        '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+    final displayName = name.isEmpty ? 'Fitrybe Athlete' : name;
+    final subtitle = (user['location'] as String?)?.trim().isNotEmpty == true
+        ? user['location'] as String
+        : ((user['bio'] as String?)?.trim().isNotEmpty == true
+            ? user['bio'] as String
+            : 'Fitrybe community');
+    // The server reports the real relationship; local toggles win once tapped.
+    final isFollowing = _followedUsers.contains(userId) ||
+        (user['isFollowing'] == true && !_unfollowedUsers.contains(userId));
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Row(
         children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                UserAvatar(
-                  url: _userProfileUrl,
-                  fallbackName: SessionService().displayName,
-                  radius: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        SessionService().displayName,
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'Just now • ${post.type}',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.more_horiz, color: Colors.white54),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: () {
-                    _showPostOptions(
-                      context: context,
-                      isOwnPost: true,
-                      postId: post.id,
-                      authorName: SessionService().displayName,
-                      onHide: () {
-                        setState(() {
-                          _hiddenUserPostIds.add(post.id);
-                        });
-                      },
-                    );
-                  },
-                ),
-              ],
-            ),
+          UserAvatar(
+            url: ApiService.media(user['avatarUrl'] as String?),
+            fallbackName: displayName,
+            radius: 22,
           ),
-
-          const SizedBox(height: 16),
-
-          // Title & Caption
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${post.type.toUpperCase()} UPDATE 🔥',
-                  style: GoogleFonts.anybody(
+                  displayName,
+                  style: GoogleFonts.hankenGrotesk(
                     color: Colors.white,
-                    fontSize: 20,
+                    fontSize: 15,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: -0.5,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 2),
                 Text(
-                  post.caption,
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.4,
+                    color: Colors.white54,
+                    fontSize: 12,
                   ),
                 ),
               ],
             ),
           ),
-
-          const SizedBox(height: 16),
-
-          // Interaction Bar
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          if (_likedUserPostIds.contains(post.id)) {
-                            _likedUserPostIds.remove(post.id);
-                            _userPostLikes[post.id] = (likesCount - 1).clamp(0, 999999);
-                          } else {
-                            _likedUserPostIds.add(post.id);
-                            _userPostLikes[post.id] = likesCount + 1;
-                          }
-                        });
-                      },
-                      child: Row(
-                        children: [
-                          Icon(
-                            isLiked ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
-                            color: isLiked ? _accent : Colors.white60,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '$likesCount Likes',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: isLiked ? _accent : Colors.white70,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 24),
-                    GestureDetector(
-                      onTap: () => _showCommentsBottomSheet(context, post.id),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.chat_bubble_outline_rounded,
-                            color: Colors.white60,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${_getCommentCount(post.id)} Comments',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white70,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+          const SizedBox(width: 12),
+          TextButton(
+            onPressed: () => _toggleFollow(userId, !isFollowing),
+            style: TextButton.styleFrom(
+              backgroundColor:
+                  isFollowing ? Colors.transparent : _accent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(
+                  color: isFollowing ? Colors.white24 : Colors.transparent,
                 ),
-                IconButton(
-                  icon: const Icon(Icons.share_outlined, color: Colors.white60, size: 20),
-                  onPressed: () {
-                    Share.share('Check out this workout post on Fitrybe! 🏃‍♂️🔥');
-                  },
-                ),
-              ],
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+            ),
+            child: Text(
+              isFollowing ? 'Following' : 'Follow',
+              style: GoogleFonts.hankenGrotesk(
+                color: isFollowing ? Colors.white70 : Colors.white,
+                fontSize: 12.5,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],
@@ -1840,7 +1879,28 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-
+  /// Optimistically flips the follow state, reverting if the server refuses.
+  Future<void> _toggleFollow(String userId, bool follow) async {
+    HapticFeedback.lightImpact();
+    setState(() {
+      if (follow) {
+        _followedUsers.add(userId);
+        _unfollowedUsers.remove(userId);
+      } else {
+        _followedUsers.remove(userId);
+        _unfollowedUsers.add(userId);
+      }
+    });
+    final ok = await ApiService.setFollowing(userId, follow);
+    if (!mounted || ok) return;
+    setState(() {
+      if (follow) {
+        _followedUsers.remove(userId);
+      } else {
+        _unfollowedUsers.remove(userId);
+      }
+    });
+  }
 
   Widget _buildGrowYourTrybeSection() {
     return Container(
@@ -1896,7 +1956,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 physics: const BouncingScrollPhysics(),
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 itemCount: _suggestedUsers.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                separatorBuilder: (_, _) => const SizedBox(width: 14),
                 itemBuilder: (context, index) {
                   final user = _suggestedUsers[index];
                   final name =

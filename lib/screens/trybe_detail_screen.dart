@@ -288,7 +288,11 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                     final conversationId = await ApiService.createConversation(
                       trybeId: widget.trybeId,
                     );
-                    if (!mounted || conversationId == null) return;
+                    if (conversationId == null ||
+                        !mounted ||
+                        !context.mounted) {
+                      return;
+                    }
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -352,7 +356,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                       Image.network(
                         _displayImage!,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
+                        errorBuilder: (_, _, _) =>
                             Container(color: _accent.withValues(alpha: 0.18)),
                       ),
                     Container(
@@ -800,7 +804,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                 height: 170,
                 width: double.infinity,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
             ),
           ],

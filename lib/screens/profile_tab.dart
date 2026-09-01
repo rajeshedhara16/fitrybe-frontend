@@ -183,7 +183,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     : Image.network(
                         _bannerUrl!,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) =>
+                        errorBuilder: (_, _, _) =>
                             Container(color: _accent.withValues(alpha: 0.35)),
                       ),
               ),
@@ -720,7 +720,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 );
               },
               child: Text(
-                'View All (${showcaseBadges.length > 0 ? allBadges.where((b) => b.unlocked).length : 0}/${allBadges.length})',
+                'View All (${showcaseBadges.isNotEmpty ? allBadges.where((b) => b.unlocked).length : 0}/${allBadges.length})',
                 style: GoogleFonts.hankenGrotesk(
                   color: _accent,
                   fontSize: 11.5,
@@ -1158,7 +1158,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     Row(
                       children: [
                         Text(
-                          '$timeAgo • ${postType}',
+                          '$timeAgo • $postType',
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white54,
                             fontSize: 12,
@@ -1311,7 +1311,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 constraints: const BoxConstraints(),
                 onPressed: () {
                   HapticFeedback.lightImpact();
-                  SharePlus.instance.share(ShareParams(text: "Check out my post on FiTrybe! 💪\n\n${caption}"));
+                  SharePlus.instance.share(ShareParams(text: "Check out my post on FiTrybe! 💪\n\n$caption"));
                 },
               ),
             ],
@@ -1326,7 +1326,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     Widget photo(String url, {BoxFit fit = BoxFit.cover}) => Image.network(
           url,
           fit: fit,
-          errorBuilder: (_, __, ___) => Container(
+          errorBuilder: (_, _, _) => Container(
             color: _cardBg,
             child: const Icon(Icons.broken_image_rounded,
                 color: Colors.white24, size: 24),

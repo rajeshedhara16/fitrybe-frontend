@@ -60,7 +60,15 @@ class AuthService {
     return null;
   }
 
+  /// Revokes this account's refresh tokens server-side, then drops the local
+  /// copies. A network failure must not strand the user signed in, so the
+  /// local clear happens either way.
   Future<void> logout() async {
+    try {
+      await _client.post('/auth/logout');
+    } catch (e) {
+      debugPrint('AuthService Logout error: $e');
+    }
     await _client.clearTokens();
   }
 }

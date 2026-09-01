@@ -62,10 +62,18 @@ class ApiClient {
   String? _accessToken;
   String? _refreshToken;
 
+  /// Current access token, republished whenever it changes.
+  ///
+  /// Long-lived connections authenticate once at handshake, so the socket has
+  /// to hear about a refresh — otherwise it keeps a token that is already
+  /// expired and can never reconnect.
+  final ValueNotifier<String?> accessTokenNotifier = ValueNotifier<String?>(null);
+
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _accessToken = prefs.getString(_tokenKey);
     _refreshToken = prefs.getString(_refreshTokenKey);
+    accessTokenNotifier.value = _accessToken;
   }
 
   bool get isAuthenticated => _accessToken != null && _accessToken!.isNotEmpty;
@@ -74,6 +82,7 @@ class ApiClient {
   Future<void> saveTokens(String accessToken, String refreshToken) async {
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    accessTokenNotifier.value = accessToken;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, accessToken);
     await prefs.setString(_refreshTokenKey, refreshToken);
@@ -82,6 +91,7 @@ class ApiClient {
   Future<void> clearTokens() async {
     _accessToken = null;
     _refreshToken = null;
+    accessTokenNotifier.value = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_refreshTokenKey);
@@ -100,32 +110,39 @@ class ApiClient {
 
   Uri _uriFor(String base, String endpoint) => Uri.parse('$base/api$endpoint');
 
-  /// Executes request against primary host; if network/DNS lookup fails, seamlessly falls back.
+  /// Runs a request against the resolved host.
+  ///
+  /// In debug builds an unreachable host falls back to the other one, so a
+  /// developer can point the app at production or a local server without
+  /// rebuilding. A release build never does this: silently retrying a failed
+  /// production call against `localhost:4000` cannot succeed on a user's
+  /// phone, and pinning [_resolvedOrigin] to it would misdirect every later
+  /// request — media URLs included — for the rest of the session.
   Future<http.Response> _execute(
     String endpoint,
     Future<http.Response> Function(Uri uri) req,
   ) async {
     final primary = origin;
     try {
-      final res = await req(_uriFor(primary, endpoint));
-      _resolvedOrigin = primary;
-      return res;
+      return await req(_uriFor(primary, endpoint));
     } catch (e) {
-      // If primary host fails with network/socket/DNS error, try fallback host
+      if (!kDebugMode) rethrow;
+
+      final usingDefaultHost = _hostOverride.isEmpty ||
+          _hostOverride == 'production' ||
+          _hostOverride == 'prod';
+      if (!usingDefaultHost) rethrow;
+
       final fallback =
           primary == _productionHost ? _defaultLocalHost : _productionHost;
-      if (_hostOverride.isEmpty ||
-          _hostOverride == 'production' ||
-          _hostOverride == 'prod') {
-        try {
-          final res = await req(_uriFor(fallback, endpoint));
-          _resolvedOrigin = fallback;
-          return res;
-        } catch (_) {
-          // If fallback fails too, rethrow original error
-        }
+      try {
+        final res = await req(_uriFor(fallback, endpoint));
+        _resolvedOrigin = fallback;
+        return res;
+      } catch (_) {
+        // Surface the original failure rather than the fallback's.
+        rethrow;
       }
-      rethrow;
     }
   }
 

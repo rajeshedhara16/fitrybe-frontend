@@ -57,17 +57,25 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   void _joinRealtimeRoom() {
     final socket = SocketService();
     socket.connect();
-    socket.emit('join_conversation', widget.chatId);
+    // joinRoom (rather than a bare emit) so the room is re-entered after a
+    // reconnect or a token refresh rebuilds the socket.
+    socket.joinRoom('join_conversation', widget.chatId);
     socket.on('chat:message', _onIncomingMessage);
   }
 
   void _onIncomingMessage(dynamic data) {
-    if (data is! Map) return;
-    final payload = Map<String, dynamic>.from(data);
-    if ('${payload['conversationId']}' != widget.chatId) return;
-    // Our own sends are appended optimistically already.
+    if (data is! Map || !mounted) return;
+    // The server broadcasts the stored record: { message: { ... } }.
+    final raw = data['message'];
+    if (raw is! Map) return;
+    final payload = Map<String, dynamic>.from(raw);
+
+    final id = '${payload['id'] ?? ''}';
+    // Our own sends are appended optimistically already, and a reconnect can
+    // replay a message we are holding — match on id so neither duplicates.
+    if (id.isNotEmpty && _messages.any((m) => m['id'] == id)) return;
     if ('${payload['senderId']}' == SessionService().userId) return;
-    if (!mounted) return;
+
     setState(() => _messages.add(_normalize(payload)));
     _scrollToBottom();
   }
@@ -110,7 +118,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       'senderName': name.isEmpty ? widget.name : name,
       'text': '${raw['text'] ?? ''}',
       'type': mediaUrl != null ? 'image' : 'text',
-      'mediaPath': mediaUrl,
+      // Absolute URL served by the backend, not a local file path.
+      'mediaUrl': mediaUrl,
       'time': _formatTime(raw['createdAt']),
     };
   }
@@ -127,7 +136,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   void dispose() {
     SocketService()
       ..off('chat:message')
-      ..emit('leave_conversation', widget.chatId);
+      ..leaveRoom('join_conversation', 'leave_conversation', widget.chatId);
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -175,11 +184,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     setState(() {
       _messages.add(_normalize(created));
       _isSending = false;
-    });
-    // Fan the message out to everyone else in the room.
-    SocketService().emit('chat:send', {
-      'conversationId': widget.chatId,
-      'text': msgText,
     });
     _scrollToBottom();
   }
@@ -396,24 +400,44 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               const SizedBox(height: 4),
             ],
 
-            // Text message
-            if (type == 'text' && msg['text'] != null && msg['text'].isNotEmpty)
+            // Attachment, when the message carries one.
+            if (type == 'image' && msg['mediaUrl'] != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  msg['mediaUrl'],
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, progress) =>
+                      progress == null
+                          ? child
+                          : const SizedBox(
+                              height: 160,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white54),
+                              ),
+                            ),
+                  errorBuilder: (context, _, _) => Container(
+                    height: 120,
+                    alignment: Alignment.center,
+                    color: Colors.black26,
+                    child: const Icon(Icons.broken_image_outlined,
+                        color: Colors.white38),
+                  ),
+                ),
+              ),
+              if (msg['text'] != null && msg['text'].isNotEmpty)
+                const SizedBox(height: 8),
+            ],
+
+            // Caption or plain text message.
+            if (msg['text'] != null && msg['text'].isNotEmpty)
               Text(
                 msg['text'],
                 style: GoogleFonts.hankenGrotesk(
                   color: Colors.white,
                   fontSize: 14,
                   height: 1.3,
-                ),
-              ),
-
-            // Image message
-            if (type == 'image' && msg['mediaPath'] != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(
-                  File(msg['mediaPath']),
-                  fit: BoxFit.cover,
                 ),
               ),
 

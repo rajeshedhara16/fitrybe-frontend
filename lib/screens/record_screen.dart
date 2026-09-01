@@ -8,6 +8,7 @@ import 'record_map_screen.dart';
 import '../services/health_service.dart';
 import '../services/api_service.dart';
 import '../services/achievement_service.dart';
+import '../services/location_tracker.dart';
 
 class RecordScreen extends StatefulWidget {
   static const routeName = '/RecordScreen';
@@ -54,10 +55,21 @@ class _RecordScreenState extends State<RecordScreen>
   Timer? _stopwatchTimer;
   int _elapsedSeconds = 0;
 
-  // ── Live metrics (simulated) ─────────────────────────────────────────────────
-  double _activeDistance = 0.0;
+  // ── Live metrics ─────────────────────────────────────────────────────────────
+  /// Kilometres measured by the GPS, never derived from elapsed time.
+  double get _activeDistance => _tracker.distanceKm;
   int _activeCalories = 0;
+
+  /// Last real reading from Health Connect / HealthKit. Zero means "no sensor
+  /// data", and the UI shows `--` rather than inventing a number.
   int _activeHeartRate = 0;
+
+  /// Owns GPS distance and the traced route for the workout in progress.
+  final LocationTracker _tracker = LocationTracker();
+
+  /// Set when the athlete starts a GPS activity without usable location, so
+  /// the distance tile can explain itself instead of sitting at 0.00.
+  String? _locationWarning;
 
   // ── Activity Log ─────────────────────────────────────────────────────────────
   final List<_ActivityLog> _activityLogs = [];
@@ -81,6 +93,7 @@ class _RecordScreenState extends State<RecordScreen>
   void dispose() {
     _pulseController.dispose();
     _stopwatchTimer?.cancel();
+    _tracker.stop();
     super.dispose();
   }
 
@@ -91,13 +104,10 @@ class _RecordScreenState extends State<RecordScreen>
       if (!mounted || _isPaused) return;
       setState(() {
         _elapsedSeconds++;
-        if (_isGpsActivity) {
-          _activeDistance += 0.003;
-        } else {
-          _activeDistance = 0.0;
-        }
+        // Flat per-second estimate. Distance comes from [_tracker] and heart
+        // rate from the health platform; neither is derived from the clock.
         _activeCalories = (_elapsedSeconds * 0.165).round();
-        _activeHeartRate = 130 + (_elapsedSeconds % 15);
+        _activeHeartRate = HealthService().healthNotifier.value.heartRate;
       });
     });
   }
@@ -128,26 +138,47 @@ class _RecordScreenState extends State<RecordScreen>
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────────
-  void _onStartPressed() {
+  Future<void> _onStartPressed() async {
     HapticFeedback.heavyImpact();
+    _tracker.reset();
     setState(() {
       _isRecording = true;
       _isPaused = false;
       _elapsedSeconds = 0;
-      _activeDistance = 0.0;
       _activeCalories = 0;
-      _activeHeartRate = 0;
+      _activeHeartRate = HealthService().healthNotifier.value.heartRate;
+      _locationWarning = null;
     });
     _startTimer();
+
+    // Distance-based workouts need the GPS. If it is unavailable the workout
+    // still records its duration — it just honestly reports no distance.
+    if (_isGpsActivity) {
+      try {
+        await _tracker.start(onUpdate: () {
+          if (mounted) setState(() {});
+        });
+      } on LocationDeniedException catch (e) {
+        if (!mounted) return;
+        setState(() => _locationWarning = e.message);
+      } catch (e) {
+        debugPrint('GPS start error: $e');
+        if (!mounted) return;
+        setState(() =>
+            _locationWarning = 'Distance is unavailable — GPS could not start.');
+      }
+    }
   }
 
   void _onPausePressed() {
     HapticFeedback.mediumImpact();
+    _tracker.isPaused = true;
     setState(() => _isPaused = true);
   }
 
   void _onResumePressed() {
     HapticFeedback.mediumImpact();
+    _tracker.isPaused = false;
     setState(() => _isPaused = false);
   }
 
@@ -156,9 +187,11 @@ class _RecordScreenState extends State<RecordScreen>
     // Save only if there was meaningful activity (at least 3 seconds).
     final shouldSave = _isRecording && _elapsedSeconds >= 3;
     final durationSeconds = _elapsedSeconds;
-    final distanceKm = _isGpsActivity ? _activeDistance : 0.0;
+    final distanceKm = _isGpsActivity ? _tracker.distanceKm : 0.0;
+    final route = _isGpsActivity ? _tracker.routeAsJson() : const <Map<String, double>>[];
     final calories = _activeCalories;
     final heartRate = _activeHeartRate;
+    _tracker.stop();
 
     if (shouldSave) {
       _activityLogs.insert(
@@ -180,16 +213,18 @@ class _RecordScreenState extends State<RecordScreen>
       _isRecording = false;
       _isPaused = false;
       _elapsedSeconds = 0;
-      _activeDistance = 0.0;
       _activeCalories = 0;
       _activeHeartRate = 0;
+      _locationWarning = null;
     });
+    _tracker.reset();
 
     if (shouldSave) {
       _persistActivity(
         durationSeconds: durationSeconds,
         distanceKm: distanceKm,
         calories: calories,
+        route: route,
       );
     }
   }
@@ -200,6 +235,7 @@ class _RecordScreenState extends State<RecordScreen>
     required int durationSeconds,
     required double distanceKm,
     required int calories,
+    required List<Map<String, double>> route,
   }) async {
     final distanceMeters = distanceKm * 1000;
     try {
@@ -211,6 +247,7 @@ class _RecordScreenState extends State<RecordScreen>
         'calories': calories,
         if (distanceKm > 0)
           'avgPace': (durationSeconds / 60) / distanceKm,
+        if (route.isNotEmpty) 'routeData': route,
       });
       // Refresh so newly earned badges appear right away.
       AchievementService().sync();
@@ -860,6 +897,26 @@ class _RecordScreenState extends State<RecordScreen>
               child: Column(
                 children: [
                   if (_isGpsActivity) ...[
+                    if (_locationWarning != null) ...[
+                      Row(
+                        children: [
+                          Icon(Icons.location_off_rounded,
+                              color: _accent, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _locationWarning!,
+                              style: GoogleFonts.hankenGrotesk(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                height: 1.3,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Row(
                       children: [
                         Expanded(
@@ -891,7 +948,7 @@ class _RecordScreenState extends State<RecordScreen>
                           child: _metricCard(
                             label: 'HEART RATE',
                             icon: Icons.favorite_outline_rounded,
-                            value: _isRecording ? '$_activeHeartRate' : '--',
+                            value: _isRecording && _activeHeartRate > 0 ? '$_activeHeartRate' : '--',
                             unit: 'BPM',
                           ),
                         ),
@@ -922,7 +979,7 @@ class _RecordScreenState extends State<RecordScreen>
                           child: _metricCard(
                             label: 'HEART RATE',
                             icon: Icons.favorite_outline_rounded,
-                            value: _isRecording ? '$_activeHeartRate' : '--',
+                            value: _isRecording && _activeHeartRate > 0 ? '$_activeHeartRate' : '--',
                             unit: 'BPM',
                           ),
                         ),

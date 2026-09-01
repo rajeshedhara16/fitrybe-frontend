@@ -120,7 +120,12 @@ class ApiService {
       'currentPassword': currentPassword,
       'newPassword': newPassword,
     });
-    _ensureOk(res);
+    final data = _ensureOk(res);
+    // The change signs every other device out, so the server issues this one a
+    // freshly versioned pair. Storing them keeps the current session alive.
+    if (data['accessToken'] != null) {
+      await _client.saveTokens(data['accessToken'], data['refreshToken'] ?? '');
+    }
   }
 
   // ── 2. FEED & POSTS ────────────────────────────────────────────────────────
@@ -154,7 +159,7 @@ class ApiService {
       'audience': audience,
       if (locationTag != null && locationTag.isNotEmpty)
         'locationTag': locationTag,
-      if (activityId != null) 'activityId': activityId,
+      'activityId': ?activityId,
     };
     final res = await _client.multipartPost(
       '/posts',
@@ -169,6 +174,19 @@ class ApiService {
         ? await _client.post('/posts/$postId/like')
         : await _client.delete('/posts/$postId/like');
     return res.statusCode < 300;
+  }
+
+  /// Edits a post's text. Only the author may do this.
+  static Future<Map<String, dynamic>?> updatePost(
+    String postId, {
+    String? caption,
+    String? locationTag,
+  }) async {
+    final res = await _client.patch('/posts/$postId', body: {
+      'caption': ?caption,
+      'locationTag': ?locationTag,
+    });
+    return _ensureOk(res)['post'] as Map<String, dynamic>?;
   }
 
   static Future<bool> deletePost(String postId) async {
@@ -380,8 +398,8 @@ class ApiService {
     String? trybeId,
   }) async {
     final res = await _client.post('/chat/conversations', body: {
-      if (userId != null) 'recipientId': userId,
-      if (trybeId != null) 'trybeId': trybeId,
+      'recipientId': ?userId,
+      'trybeId': ?trybeId,
     });
     return _ensureOk(res)['conversationId'] as String?;
   }
@@ -409,7 +427,7 @@ class ApiService {
       '/chat/conversations/$conversationId/messages',
       body: {
         'text': text,
-        if (mediaUrl != null) 'mediaUrl': mediaUrl,
+        'mediaUrl': ?mediaUrl,
       },
     );
     return _ensureOk(res)['message'] as Map<String, dynamic>?;
