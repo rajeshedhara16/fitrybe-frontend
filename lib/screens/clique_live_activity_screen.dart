@@ -8,6 +8,7 @@ import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/socket_service.dart';
 import '../services/achievement_service.dart';
+import '../services/calorie_estimator.dart';
 import '../services/location_tracker.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
@@ -442,9 +443,12 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       if (!_isPaused) {
         setState(() {
           _elapsedSeconds++;
-          // Flat per-second estimate. Distance comes from the GPS via
-          // [_tracker] and is refreshed by [_beginTracking]'s callback.
-          _activeCalories = (_elapsedSeconds * 0.165).toInt();
+          // Calories follow measured distance, not the clock, so an athlete
+          // who has not set off yet shows a burn of zero.
+          _activeCalories = CalorieEstimator.fromDistance(
+            activity: _selectedActivityType,
+            distanceKm: _tracker.distanceKm,
+          );
           _activeHeartRate = HealthService().healthNotifier.value.heartRate;
           _refreshMyRow();
         });

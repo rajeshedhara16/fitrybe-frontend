@@ -10,7 +10,14 @@ import '../services/session_service.dart';
 import '../widgets/user_avatar.dart';
 
 class CreatePostScreen extends StatefulWidget {
-  const CreatePostScreen({super.key});
+  /// A finished workout to attach to this post, as returned by the API.
+  ///
+  /// Passed when sharing straight from the record screen. The post is then
+  /// tagged with the activity, which is what lets the feed card show its real
+  /// distance and pace.
+  final Map<String, dynamic>? activity;
+
+  const CreatePostScreen({super.key, this.activity});
 
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
@@ -58,6 +65,10 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: _postTypes.length, vsync: this);
+    // Arriving from a finished workout, the post is about that workout.
+    if (widget.activity != null) {
+      _selectedPostType = 'Activity';
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _captionFocusNode.requestFocus();
     });
@@ -76,6 +87,11 @@ class _CreatePostScreenState extends State<CreatePostScreen>
     HapticFeedback.lightImpact();
     try {
       final List<XFile> images = await _picker.pickMultiImage(
+        // Without a cap these upload at full sensor resolution — several MB
+        // each, five at a time. The server downscales anyway, so sending the
+        // originals only costs the user their mobile data.
+        maxWidth: 1920,
+        maxHeight: 1920,
         imageQuality: 85,
         limit: 5,
       );
@@ -220,6 +236,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
         type: _selectedPostType,
         audience: _selectedAudience == 'Everyone' ? 'EVERYONE' : 'TRYBES',
         locationTag: _locationTag,
+        activityId: widget.activity?['id'] as String?,
         images: _selectedImages.map((x) => File(x.path)).toList(),
       );
 
@@ -470,6 +487,12 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                   ),
                   const SizedBox(height: 16),
 
+                  // ── Tagged workout ─────────────────────────────────────
+                  if (widget.activity != null) ...[
+                    _buildTaggedActivityCard(),
+                    const SizedBox(height: 20),
+                  ],
+
                   // ── Photo Grid ─────────────────────────────────────────
                   if (_selectedImages.isNotEmpty) ...[
                     _buildPhotoGrid(),
@@ -592,6 +615,80 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   }
 
   // ── Photo Grid Widget ─────────────────────────────────────────────────────
+  /// The workout this post is tagged with, so it is obvious what the feed card
+  /// will show alongside the caption.
+  Widget _buildTaggedActivityCard() {
+    final activity = widget.activity!;
+    final distanceKm =
+        ((activity['distance'] as num?)?.toDouble() ?? 0) / 1000;
+    final durationSeconds = (activity['duration'] as num?)?.toInt() ?? 0;
+    final minutes = durationSeconds ~/ 60;
+    final seconds = durationSeconds % 60;
+    final calories = (activity['calories'] as num?)?.toInt() ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _accent.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: _accent.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.directions_run_rounded, color: _accent, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${activity['title'] ?? 'Workout'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (distanceKm > 0)
+                      '${distanceKm.toStringAsFixed(2)} km',
+                    '$minutes:${seconds.toString().padLeft(2, '0')}',
+                    if (calories > 0) '$calories kcal',
+                  ].join('  •  '),
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white54,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            'TAGGED',
+            style: GoogleFonts.hankenGrotesk(
+              color: _accent,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPhotoGrid() {
     if (_selectedImages.length == 1) {
       return _buildSinglePhoto(_selectedImages[0], 0);

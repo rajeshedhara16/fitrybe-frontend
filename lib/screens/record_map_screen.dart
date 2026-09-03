@@ -9,6 +9,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'subscription_screen.dart';
 import '../services/api_service.dart';
 import '../services/achievement_service.dart';
+import '../services/calorie_estimator.dart';
 import '../services/health_service.dart';
 import '../services/location_tracker.dart';
 
@@ -110,9 +111,12 @@ class _RecordMapScreenState extends State<RecordMapScreen>
       if (!mounted || _isPaused) return;
       setState(() {
         _elapsedSeconds++;
-        // Flat per-second estimate. Distance and the route come from
-        // [_tracker]; nothing here is derived from the clock.
-        _activeCalories = (_elapsedSeconds * 0.165).round();
+        // Calories follow the ground actually covered, so a stationary
+        // athlete does not accumulate a burn.
+        _activeCalories = CalorieEstimator.fromDistance(
+          activity: _selectedActivityName,
+          distanceKm: _tracker.distanceKm,
+        );
         _activeHeartRate = HealthService().healthNotifier.value.heartRate;
       });
     });

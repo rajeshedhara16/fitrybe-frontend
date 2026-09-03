@@ -816,7 +816,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final String? avatarUrl = ApiService.media(author['avatarUrl'] as String?);
     final List imageUrls = (post['imageUrls'] is List) ? post['imageUrls'] : [];
     final Map<String, dynamic>? activity = (post['activity'] is Map) ? Map<String, dynamic>.from(post['activity']) : null;
-    final String postType = (post['type'] ?? 'Workout').toString();
     final String locationTag = post['locationTag'] ?? 'Fitrybe Feed';
 
     final bool isLiked = _likedUserPostIds.contains(postId) || (post['likedByMe'] == true);
@@ -829,7 +828,7 @@ class _HomeScreenState extends State<HomeScreen> {
           bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
         ),
       ),
-      padding: const EdgeInsets.symmetric(vertical: 20),
+      padding: const EdgeInsets.fromLTRB(0, 14, 0, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -888,175 +887,206 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          const SizedBox(height: 16),
-
-          // Title & Description
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${postType.toUpperCase()} SESSION 🔥',
-                  style: GoogleFonts.anybody(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: -0.5,
-                  ),
+          // Caption & Description (Tighter gap below author name)
+          if (caption.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+              child: Text(
+                caption,
+                style: GoogleFonts.hankenGrotesk(
+                  color: Colors.white,
+                  fontSize: 14.5,
+                  height: 1.4,
                 ),
-                if (caption.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    caption,
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white70,
-                      fontSize: 14,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
-          ),
 
-          const SizedBox(height: 16),
-
-          // Activity image, resolved against the configured API host.
+          // Activity image - rendered ONLY if an image is present.
           Builder(
             builder: (context) {
               final String? displayImageUrl = imageUrls.isEmpty
                   ? null
                   : ApiService.media('${imageUrls.first}');
+              final String activityTitle = (activity?['title'] ?? activity?['type'] ?? activity?['name'] ?? post['type'] ?? 'Workout').toString();
 
-              return AspectRatio(
-                aspectRatio: 4 / 5,
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: displayImageUrl == null
-                          ? Container(
-                              color: _cardBg,
-                              child: const Center(
-                                child: Icon(Icons.directions_run_rounded,
-                                    color: Colors.white24, size: 48),
-                              ),
-                            )
-                          : Image.network(
-                              displayImageUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) => Container(
-                                color: _cardBg,
-                                child: const Center(
-                                  child: Icon(Icons.directions_run_rounded, color: Colors.white24, size: 48),
-                                ),
-                              ),
-                            ),
-                    ),
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black.withValues(alpha: 0.5),
-                            ],
-                          ),
-                        ),
+              if (displayImageUrl == null) {
+                // If there's no image but there's a real activity attached, show a clean metrics card.
+                if (activity != null && (activity['distance'] != null || activity['avgPace'] != null)) {
+                  final double distKm = ((activity['distance'] as num?)?.toDouble() ?? 0) / 1000.0;
+                  final String paceStr = (activity['avgPace'] as String?) ?? '0:00';
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _cardBg,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                       ),
-                    ),
-                    Positioned(
-                      bottom: 24,
-                      left: 20,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      child: Row(
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.4),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.white10),
-                            ),
-                            child: Column(
+                          Icon(Icons.directions_run_rounded, color: _accent, size: 24),
+                          const SizedBox(width: 12),
+                          if (activity['distance'] != null) ...[
+                            Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  'DISTANCE',
-                                  style: GoogleFonts.hankenGrotesk(
-                                    fontSize: 9,
-                                    color: Colors.white70,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                Text(
-                                  '${activity != null ? ((activity['distance'] ?? 0) / 1000.0).toStringAsFixed(1) : '7.0'} km',
-                                  style: GoogleFonts.anybody(
-                                    fontSize: 18,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                                Text(activityTitle.toUpperCase(), style: GoogleFonts.hankenGrotesk(fontSize: 9.5, color: _accent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                const SizedBox(height: 1),
+                                Text('DISTANCE', style: GoogleFonts.hankenGrotesk(fontSize: 8.5, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                Text('${distKm.toStringAsFixed(1)} km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
                               ],
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.4),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.white10),
-                            ),
-                            child: Column(
+                            const SizedBox(width: 24),
+                          ],
+                          if (activity['avgPace'] != null) ...[
+                            Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  'PACE',
-                                  style: GoogleFonts.hankenGrotesk(
-                                    fontSize: 9,
-                                    color: Colors.white70,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                Text(
-                                  '${activity != null ? (activity['avgPace'] ?? '5:00') : '5.0'} /km',
-                                  style: GoogleFonts.anybody(
-                                    fontSize: 18,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                                Text('PACE', style: GoogleFonts.hankenGrotesk(fontSize: 9, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                Text('$paceStr /km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
                               ],
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
-                    Positioned(
-                      bottom: 24,
-                      right: 20,
-                      child: CircleAvatar(
-                        radius: 22,
-                        backgroundColor: _accent,
-                        child: const Icon(Icons.map, color: Colors.white, size: 22),
-                      ),
+                  );
+                }
+                return const SizedBox.shrink();
+              }
+
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: AspectRatio(
+                    aspectRatio: 4 / 5,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: Image.network(
+                            displayImageUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              color: _cardBg,
+                              child: const Center(
+                                child: Icon(Icons.broken_image_rounded, color: Colors.white24, size: 48),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black.withValues(alpha: 0.5),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (activity != null)
+                          Positioned(
+                            bottom: 20,
+                            left: 16,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (activity['distance'] != null)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.5),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: Colors.white10),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          activityTitle.toUpperCase(),
+                                          style: GoogleFonts.hankenGrotesk(
+                                            fontSize: 9.5,
+                                            color: _accent,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 1),
+                                        Text(
+                                          'DISTANCE',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            fontSize: 8.5,
+                                            color: Colors.white70,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${(((activity['distance'] as num?)?.toDouble() ?? 0) / 1000.0).toStringAsFixed(1)} km',
+                                          style: GoogleFonts.anybody(
+                                            fontSize: 16,
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                if (activity['avgPace'] != null) ...[
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.5),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: Colors.white10),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'PACE',
+                                          style: GoogleFonts.hankenGrotesk(
+                                            fontSize: 9,
+                                            color: Colors.white70,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${activity['avgPace']} /km',
+                                          style: GoogleFonts.anybody(
+                                            fontSize: 16,
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               );
             },
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
-          // Interaction Bar (Matching Hardcoded Post UI!)
+          // Interaction Bar (Like, Comment, Share with reduced bottom spacing)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [

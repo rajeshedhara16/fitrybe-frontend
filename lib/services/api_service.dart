@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 import 'api_client.dart';
 
 /// Single facade over the Fitrybe REST API.
@@ -63,6 +64,30 @@ class ApiService {
     return entries.isEmpty ? '' : '?${entries.join('&')}';
   }
 
+  /// Content type for an upload, derived from its extension.
+  ///
+  /// `MultipartFile.fromPath` does not sniff — it labels every file
+  /// `application/octet-stream`, which the server has no reason to treat as an
+  /// image. Sending the real type is what lets an upload be recognised.
+  static MediaType _mediaTypeFor(String path) {
+    final ext = path.toLowerCase().split('.').last;
+    switch (ext) {
+      case 'png':
+        return MediaType('image', 'png');
+      case 'webp':
+        return MediaType('image', 'webp');
+      case 'gif':
+        return MediaType('image', 'gif');
+      case 'heic':
+      case 'heif':
+        return MediaType('image', 'heic');
+      case 'jpg':
+      case 'jpeg':
+      default:
+        return MediaType('image', 'jpeg');
+    }
+  }
+
   static Future<List<http.MultipartFile>> _filesFrom(
     String field,
     List<File> files,
@@ -73,6 +98,7 @@ class ApiService {
         field,
         f.path,
         filename: f.path.split(Platform.pathSeparator).last,
+        contentType: _mediaTypeFor(f.path),
       ));
     }
     return out;
@@ -422,15 +448,27 @@ class ApiService {
     String conversationId,
     String text, {
     String? mediaUrl,
+    String? replyToId,
   }) async {
     final res = await _client.post(
       '/chat/conversations/$conversationId/messages',
       body: {
         'text': text,
         'mediaUrl': ?mediaUrl,
+        'replyToId': ?replyToId,
       },
     );
     return _ensureOk(res)['message'] as Map<String, dynamic>?;
+  }
+
+  /// Removes one of your own messages for everyone in the thread.
+  static Future<bool> deleteMessage(
+    String conversationId,
+    String messageId,
+  ) async {
+    final res = await _client
+        .delete('/chat/conversations/$conversationId/messages/$messageId');
+    return res.statusCode < 300;
   }
 
   static Future<void> markConversationRead(String conversationId) async {

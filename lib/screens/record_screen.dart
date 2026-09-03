@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:material_symbols_icons/symbols.dart';
+import 'create_post_screen.dart';
 import 'record_map_screen.dart';
 import '../services/health_service.dart';
 import '../services/api_service.dart';
 import '../services/achievement_service.dart';
+import '../services/calorie_estimator.dart';
 import '../services/location_tracker.dart';
 
 class RecordScreen extends StatefulWidget {
@@ -71,6 +73,14 @@ class _RecordScreenState extends State<RecordScreen>
   /// the distance tile can explain itself instead of sitting at 0.00.
   String? _locationWarning;
 
+  /// The workout just finished, kept on screen so its numbers can be read and
+  /// shared instead of vanishing the moment Stop is pressed.
+  _FinishedActivity? _finished;
+
+  /// True while the finished workout is still being written to the server —
+  /// sharing has to wait for the id that tags the post.
+  bool _isSavingFinished = false;
+
   // ── Activity Log ─────────────────────────────────────────────────────────────
   final List<_ActivityLog> _activityLogs = [];
 
@@ -104,9 +114,12 @@ class _RecordScreenState extends State<RecordScreen>
       if (!mounted || _isPaused) return;
       setState(() {
         _elapsedSeconds++;
-        // Flat per-second estimate. Distance comes from [_tracker] and heart
-        // rate from the health platform; neither is derived from the clock.
-        _activeCalories = (_elapsedSeconds * 0.165).round();
+        _activeCalories = CalorieEstimator.estimate(
+          activity: _selectedActivityName,
+          elapsedSeconds: _elapsedSeconds,
+          distanceKm: _tracker.distanceKm,
+          tracksDistance: _isGpsActivity,
+        );
         _activeHeartRate = HealthService().healthNotifier.value.heartRate;
       });
     });
@@ -148,6 +161,10 @@ class _RecordScreenState extends State<RecordScreen>
       _activeCalories = 0;
       _activeHeartRate = HealthService().healthNotifier.value.heartRate;
       _locationWarning = null;
+      // A new workout replaces the last one's summary, which would otherwise
+      // stay pinned over the live metrics.
+      _finished = null;
+      _isSavingFinished = false;
     });
     _startTimer();
 
@@ -216,6 +233,20 @@ class _RecordScreenState extends State<RecordScreen>
       _activeCalories = 0;
       _activeHeartRate = 0;
       _locationWarning = null;
+      // Hold the finished workout on screen rather than clearing it. The
+      // athlete has just stopped and wants to see what they did — and decide
+      // whether to share it.
+      _finished = shouldSave
+          ? _FinishedActivity(
+              name: _selectedActivityName,
+              icon: _selectedActivityIcon,
+              durationSeconds: durationSeconds,
+              distanceKm: distanceKm,
+              calories: calories,
+              avgHeartRate: heartRate,
+            )
+          : null;
+      _isSavingFinished = shouldSave;
     });
     _tracker.reset();
 
@@ -229,6 +260,27 @@ class _RecordScreenState extends State<RecordScreen>
     }
   }
 
+  /// Clears the finished-workout summary and returns to the idle recorder.
+  void _dismissSummary() {
+    HapticFeedback.lightImpact();
+    setState(() => _finished = null);
+  }
+
+  /// Opens the composer with this workout attached, so the resulting post
+  /// carries its real distance and pace.
+  Future<void> _shareFinished() async {
+    final saved = _finished?.saved;
+    if (saved == null) return;
+    HapticFeedback.mediumImpact();
+
+    final posted = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => CreatePostScreen(activity: saved)),
+    );
+    if (!mounted) return;
+    if (posted == true) setState(() => _finished = null);
+  }
+
   /// Writes the finished workout to the backend so it counts toward analytics,
   /// goals, leaderboards, and achievements.
   Future<void> _persistActivity({
@@ -239,7 +291,7 @@ class _RecordScreenState extends State<RecordScreen>
   }) async {
     final distanceMeters = distanceKm * 1000;
     try {
-      await ApiService.logActivity({
+      final saved = await ApiService.logActivity({
         'title': _selectedActivityName,
         'type': _selectedActivityName,
         'duration': durationSeconds,
@@ -252,10 +304,17 @@ class _RecordScreenState extends State<RecordScreen>
       // Refresh so newly earned badges appear right away.
       AchievementService().sync();
       if (!mounted) return;
+      // The server id is what lets a post be tagged with this workout, so the
+      // Share button stays disabled until it arrives.
+      setState(() {
+        _finished?.saved = saved;
+        _isSavingFinished = false;
+      });
       _loadRecentActivities();
     } catch (e) {
       debugPrint('Save activity error: $e');
       if (!mounted) return;
+      setState(() => _isSavingFinished = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: const Color(0xFF1F1F22),
@@ -868,7 +927,9 @@ class _RecordScreenState extends State<RecordScreen>
             Column(
               children: [
                 Text(
-                  _formatTime(_elapsedSeconds),
+                  // Once stopped, the clock holds the finished time rather
+                  // than snapping back to zero.
+                  _finished?.durationLabel ?? _formatTime(_elapsedSeconds),
                   style: GoogleFonts.anybody(
                     color: Colors.white,
                     fontSize: 72,
@@ -891,7 +952,13 @@ class _RecordScreenState extends State<RecordScreen>
 
             const Spacer(),
 
-            // ── Metrics Grid ───────────────────────────────────────────
+            // ── Finished workout, or the live metrics grid ─────────────
+            if (_finished != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: _buildFinishedSummary(),
+              )
+            else
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
@@ -1133,6 +1200,152 @@ class _RecordScreenState extends State<RecordScreen>
     );
   }
 
+  /// The just-finished workout, with the option to share it as a post.
+  Widget _buildFinishedSummary() {
+    final finished = _finished!;
+    final pace = finished.paceLabel;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _accent.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(finished.icon, color: _accent, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${finished.name} complete',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              if (_isSavingFinished)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white38),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              if (finished.distanceKm > 0)
+                Expanded(
+                  child: _summaryStat(
+                      'DISTANCE', finished.distanceKm.toStringAsFixed(2), 'KM'),
+                ),
+              if (pace != null)
+                Expanded(child: _summaryStat('PACE', pace, '/KM')),
+              Expanded(
+                child: _summaryStat(
+                    'CALORIES', '${finished.calories}', 'KCAL'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _dismissSummary,
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.white24),
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                  child: Text(
+                    'Done',
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  // Sharing tags the post with this workout, which needs the
+                  // id the server assigns — so it waits for the save.
+                  onPressed: finished.saved == null ? null : _shareFinished,
+                  icon: const Icon(Icons.ios_share_rounded, size: 18),
+                  label: Text(
+                    _isSavingFinished ? 'Saving…' : 'Share as post',
+                    style: GoogleFonts.hankenGrotesk(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: _accent.withValues(alpha: 0.3),
+                    disabledForegroundColor: Colors.white54,
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryStat(String label, String value, String unit) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white38,
+            fontSize: 9.5,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              value,
+              style: GoogleFonts.anybody(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 3),
+            Text(
+              unit,
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white38,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _metricCard({
     required String label,
     required IconData icon,
@@ -1250,6 +1463,49 @@ class _PressButtonState extends State<_PressButton>
 }
 
 // ── Activity Log Data Model ───────────────────────────────────────────────────
+/// A workout that has just been stopped, held on screen until dismissed.
+///
+/// [saved] is filled in once the server accepts it; sharing needs the id it
+/// returns in order to tag the post.
+class _FinishedActivity {
+  final String name;
+  final IconData icon;
+  final int durationSeconds;
+  final double distanceKm;
+  final int calories;
+  final int avgHeartRate;
+  Map<String, dynamic>? saved;
+
+  _FinishedActivity({
+    required this.name,
+    required this.icon,
+    required this.durationSeconds,
+    required this.distanceKm,
+    required this.calories,
+    required this.avgHeartRate,
+  });
+
+  String get durationLabel {
+    final h = durationSeconds ~/ 3600;
+    final m = (durationSeconds % 3600) ~/ 60;
+    final s = durationSeconds % 60;
+    if (h > 0) {
+      return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  /// Average pace, or null when no distance was recorded to derive it from.
+  String? get paceLabel {
+    if (distanceKm < 0.01) return null;
+    final minPerKm = (durationSeconds / 60) / distanceKm;
+    final min = minPerKm.floor();
+    final sec = ((minPerKm - min) * 60).round();
+    if (sec == 60) return '${min + 1}:00';
+    return '$min:${sec.toString().padLeft(2, '0')}';
+  }
+}
+
 class _ActivityLog {
   final String activityName;
   final IconData activityIcon;

@@ -45,6 +45,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   String? _error;
   bool _isSending = false;
 
+  /// Picked but not yet sent. The image is uploaded when Send is pressed, so
+  /// it can still be removed, captioned, or replied-with first.
+  XFile? _pendingAttachment;
+
+  /// The message being replied to, shown above the composer until sent.
+  Map<String, dynamic>? _replyingTo;
+
   @override
   void initState() {
     super.initState();
@@ -61,6 +68,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     // reconnect or a token refresh rebuilds the socket.
     socket.joinRoom('join_conversation', widget.chatId);
     socket.on('chat:message', _onIncomingMessage);
+    socket.on('chat:message_deleted', _onMessageDeleted);
   }
 
   void _onIncomingMessage(dynamic data) {
@@ -78,6 +86,14 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
     setState(() => _messages.add(_normalize(payload)));
     _scrollToBottom();
+  }
+
+  void _onMessageDeleted(dynamic data) {
+    if (data is! Map || !mounted) return;
+    if ('${data['conversationId']}' != widget.chatId) return;
+    final id = '${data['messageId'] ?? ''}';
+    if (id.isEmpty) return;
+    setState(() => _messages.removeWhere((m) => m['id'] == id));
   }
 
   Future<void> _loadMessages() async {
@@ -112,14 +128,35 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         '${sender['firstName'] ?? ''} ${sender['lastName'] ?? ''}'.trim();
     final mediaUrl = ApiService.media(raw['mediaUrl'] as String?);
 
+    // The quoted message, flattened to what a bubble needs to preview it.
+    Map<String, dynamic>? replyTo;
+    if (raw['replyTo'] is Map) {
+      final r = Map<String, dynamic>.from(raw['replyTo']);
+      final rSender = (r['sender'] is Map)
+          ? Map<String, dynamic>.from(r['sender'])
+          : const <String, dynamic>{};
+      final rName =
+          '${rSender['firstName'] ?? ''} ${rSender['lastName'] ?? ''}'.trim();
+      replyTo = {
+        'id': '${r['id'] ?? ''}',
+        'senderName': '${r['senderId']}' == SessionService().userId
+            ? 'You'
+            : (rName.isEmpty ? widget.name : rName),
+        'text': '${r['text'] ?? ''}',
+        'hasMedia': r['mediaUrl'] != null,
+      };
+    }
+
     return {
       'id': '${raw['id'] ?? DateTime.now().microsecondsSinceEpoch}',
+      'senderId': senderId,
       'isMe': senderId == SessionService().userId,
       'senderName': name.isEmpty ? widget.name : name,
       'text': '${raw['text'] ?? ''}',
       'type': mediaUrl != null ? 'image' : 'text',
       // Absolute URL served by the backend, not a local file path.
       'mediaUrl': mediaUrl,
+      'replyTo': replyTo,
       'time': _formatTime(raw['createdAt']),
     };
   }
@@ -136,6 +173,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   void dispose() {
     SocketService()
       ..off('chat:message')
+      ..off('chat:message_deleted')
       ..leaveRoom('join_conversation', 'leave_conversation', widget.chatId);
     _textController.dispose();
     _scrollController.dispose();
@@ -154,75 +192,166 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
   }
 
+  /// Sends whatever is composed: text, a staged attachment, a reply, or any
+  /// combination. The attachment uploads here rather than at pick time, so
+  /// nothing is stored for a message the user abandons.
   Future<void> _sendMessage({String text = ''}) async {
     final msgText = text.trim();
-    if (msgText.isEmpty || _isSending) return;
+    final attachment = _pendingAttachment;
+    if ((msgText.isEmpty && attachment == null) || _isSending) return;
 
     HapticFeedback.lightImpact();
     setState(() => _isSending = true);
+    final replyToId = _replyingTo?['id'] as String?;
     _textController.clear();
 
-    final created = await ApiService.sendMessage(widget.chatId, msgText);
-    if (!mounted) return;
+    try {
+      String? mediaUrl;
+      if (attachment != null) {
+        mediaUrl = await ApiService.uploadChatImage(File(attachment.path));
+        if (mediaUrl == null) {
+          throw ApiException(0, 'That image could not be uploaded.');
+        }
+      }
 
-    if (created == null) {
-      // Put the text back so the message is not silently lost.
+      final created = await ApiService.sendMessage(
+        widget.chatId,
+        msgText,
+        mediaUrl: mediaUrl,
+        replyToId: replyToId,
+      );
+      if (!mounted) return;
+      if (created == null) throw ApiException(0, 'Message could not be sent.');
+
+      setState(() {
+        _messages.add(_normalize(created));
+        _pendingAttachment = null;
+        _replyingTo = null;
+        _isSending = false;
+      });
+      _scrollToBottom();
+    } catch (e) {
+      debugPrint('Send message error: $e');
+      if (!mounted) return;
+      // Put the text back so a failed send does not lose what was typed.
       _textController.text = msgText;
       setState(() => _isSending = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: _cardBg,
-          content: Text(
-            'Message could not be sent. Check your connection.',
-            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
-          ),
-        ),
+      _toast(
+        e is ApiException && e.message.isNotEmpty
+            ? e.message
+            : 'Message could not be sent. Check your connection.',
       );
-      return;
     }
-
-    setState(() {
-      _messages.add(_normalize(created));
-      _isSending = false;
-    });
-    _scrollToBottom();
   }
 
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _cardBg,
+        content: Text(
+          message,
+          style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+        ),
+      ),
+    );
+  }
+
+  /// Stages an image on the composer. Nothing is uploaded until Send.
   Future<void> _attachImage() async {
+    if (_isSending) return;
     try {
       final XFile? image = await _picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 1280,
         maxHeight: 1280,
       );
-      if (image == null || _isSending) return;
-
-      setState(() => _isSending = true);
-      // Upload first, then send a message that references the stored file.
-      final url = await ApiService.uploadChatImage(File(image.path));
-      if (url == null) {
-        if (mounted) setState(() => _isSending = false);
-        return;
-      }
-      final created = await ApiService.sendMessage(
-        widget.chatId,
-        _textController.text.trim(),
-        mediaUrl: url,
-      );
-      if (!mounted) return;
-      setState(() {
-        if (created != null) _messages.add(_normalize(created));
-        _isSending = false;
-      });
-      _textController.clear();
-      _scrollToBottom();
+      if (image == null || !mounted) return;
+      setState(() => _pendingAttachment = image);
     } catch (e) {
-      debugPrint('Error attaching image: $e');
-      if (mounted) setState(() => _isSending = false);
+      debugPrint('Error picking image: $e');
+      _toast('That image could not be opened.');
     }
   }
 
+  /// Long-press actions on a message.
+  void _showMessageActions(Map<String, dynamic> msg) {
+    HapticFeedback.mediumImpact();
+    final isMe = msg['isMe'] == true;
+    final text = '${msg['text'] ?? ''}';
 
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.reply_rounded, color: Colors.white70),
+              title: Text('Reply',
+                  style: GoogleFonts.hankenGrotesk(color: Colors.white)),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                setState(() => _replyingTo = msg);
+              },
+            ),
+            if (text.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.copy_rounded, color: Colors.white70),
+                title: Text('Copy text',
+                    style: GoogleFonts.hankenGrotesk(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  Clipboard.setData(ClipboardData(text: text));
+                  _toast('Copied to clipboard.');
+                },
+              ),
+            if (isMe)
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded,
+                    color: Colors.redAccent),
+                title: Text('Delete',
+                    style: GoogleFonts.hankenGrotesk(color: Colors.redAccent)),
+                subtitle: Text('Removes it for everyone',
+                    style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white38, fontSize: 11.5)),
+                onTap: () {
+                  Navigator.pop(sheetCtx);
+                  _deleteMessage('${msg['id']}');
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteMessage(String messageId) async {
+    // Drop it immediately, and put it back if the server refuses.
+    final index = _messages.indexWhere((m) => m['id'] == messageId);
+    if (index == -1) return;
+    final removed = _messages[index];
+    setState(() => _messages.removeAt(index));
+
+    final ok = await ApiService.deleteMessage(widget.chatId, messageId);
+    if (!mounted || ok) return;
+    setState(() => _messages.insert(index, removed));
+    _toast('That message could not be deleted.');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -309,7 +438,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   top: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
                 ),
               ),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_replyingTo != null) _buildReplyBanner(),
+                  if (_pendingAttachment != null) _buildAttachmentPreview(),
+                  Row(
                 children: [
                   Expanded(
                     child: TextField(
@@ -348,16 +482,170 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                   ),
                   const SizedBox(width: 12),
                   IconButton(
-                    icon: const Icon(
-                      Icons.send_rounded,
-                      color: Colors.white54,
-                      size: 24,
-                    ),
-                    onPressed: () => _sendMessage(text: _textController.text),
+                    icon: _isSending
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white54),
+                          )
+                        : const Icon(
+                            Icons.send_rounded,
+                            color: Colors.white54,
+                            size: 24,
+                          ),
+                    onPressed: _isSending
+                        ? null
+                        : () => _sendMessage(text: _textController.text),
+                  ),
+                ],
                   ),
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shows which message the next send will reply to.
+  Widget _buildReplyBanner() {
+    final reply = _replyingTo!;
+    final text = '${reply['text'] ?? ''}';
+    final preview = text.isNotEmpty
+        ? text
+        : (reply['mediaUrl'] != null ? 'Photo' : 'Message');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(left: BorderSide(color: _accent, width: 3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Replying to ${reply['isMe'] == true ? 'yourself' : reply['senderName'] ?? widget.name}',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: _accent,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  preview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white54, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded,
+                color: Colors.white38, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () => setState(() => _replyingTo = null),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The staged image, removable until Send is pressed.
+  Widget _buildAttachmentPreview() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(
+              File(_pendingAttachment!.path),
+              width: 48,
+              height: 48,
+              fit: BoxFit.cover,
+              errorBuilder: (context, _, _) => Container(
+                width: 48,
+                height: 48,
+                color: Colors.black26,
+                child: const Icon(Icons.broken_image_outlined,
+                    color: Colors.white38, size: 20),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Photo ready to send',
+              style: GoogleFonts.hankenGrotesk(
+                  color: Colors.white70, fontSize: 12.5),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded,
+                color: Colors.white38, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () => setState(() => _pendingAttachment = null),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The quoted message shown inside a reply's bubble.
+  Widget _buildQuotedMessage(Map<String, dynamic> reply, bool isMe) {
+    final text = '${reply['text'] ?? ''}';
+    final preview =
+        text.isNotEmpty ? text : (reply['hasMedia'] == true ? 'Photo' : 'Message');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: isMe ? 0.18 : 0.28),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: isMe ? Colors.white70 : _accent,
+            width: 2.5,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${reply['senderName'] ?? ''}',
+            style: GoogleFonts.hankenGrotesk(
+              color: isMe ? Colors.white : _accent,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            preview,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.hankenGrotesk(
+                color: Colors.white60, fontSize: 12),
           ),
         ],
       ),
@@ -370,7 +658,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: GestureDetector(
+        onLongPress: () => _showMessageActions(msg),
+        child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
@@ -388,6 +678,12 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (msg['replyTo'] is Map)
+              _buildQuotedMessage(
+                Map<String, dynamic>.from(msg['replyTo']),
+                isMe,
+              ),
+
             if (!isMe && widget.isTrybe) ...[
               Text(
                 msg['senderName'] ?? '',
@@ -502,6 +798,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               ],
             ),
           ],
+        ),
         ),
       ),
     );
