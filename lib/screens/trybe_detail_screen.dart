@@ -6,6 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:share_plus/share_plus.dart';
 import 'chat_detail_screen.dart';
 import 'create_post_screen.dart';
+import 'user_profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
 import '../widgets/state_views.dart';
@@ -1215,19 +1216,31 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                   ),
                 ),
                 const SizedBox(width: 8),
-                UserAvatar(
-                  url: ApiService.media(item['avatarUrl'] as String?),
-                  fallbackName: '${item['name'] ?? ''}',
-                  radius: 18,
+                GestureDetector(
+                  onTap: () => UserProfileScreen.navigate(
+                    context,
+                    item['userId'] as String? ?? item['id'] as String?,
+                  ),
+                  child: UserAvatar(
+                    url: ApiService.media(item['avatarUrl'] as String?),
+                    fallbackName: '${item['name'] ?? ''}',
+                    radius: 18,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    isMe ? 'You' : '${item['name'] ?? 'Athlete'}',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: isMe ? _accent : Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
+                  child: GestureDetector(
+                    onTap: () => UserProfileScreen.navigate(
+                      context,
+                      item['userId'] as String? ?? item['id'] as String?,
+                    ),
+                    child: Text(
+                      isMe ? 'You' : '${item['name'] ?? 'Athlete'}',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: isMe ? _accent : Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                 ),
@@ -1298,33 +1311,39 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
             ),
             child: Row(
               children: [
-                UserAvatar(
-                  url: ApiService.media(user['avatarUrl'] as String?),
-                  fallbackName: name,
-                  radius: 20,
+                GestureDetector(
+                  onTap: () => UserProfileScreen.navigate(context, userId),
+                  child: UserAvatar(
+                    url: ApiService.media(user['avatarUrl'] as String?),
+                    fallbackName: name,
+                    radius: 20,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(isMe ? '$name (You)' : name,
+                  child: GestureDetector(
+                    onTap: () => UserProfileScreen.navigate(context, userId),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(isMe ? '$name (You)' : name,
+                            style: GoogleFonts.hankenGrotesk(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14)),
+                        Text(
+                          switch (role) {
+                            'CREATOR' => 'Trybe Creator',
+                            'CAPTAIN' => 'Captain',
+                            _ => 'Member',
+                          },
                           style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14)),
-                      Text(
-                        switch (role) {
-                          'CREATOR' => 'Trybe Creator',
-                          'CAPTAIN' => 'Captain',
-                          _ => 'Member',
-                        },
-                        style: GoogleFonts.hankenGrotesk(
-                            color: _accent,
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ],
+                              color: _accent,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (!isMe && userId != null)

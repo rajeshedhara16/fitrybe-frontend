@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
+import 'user_profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/state_views.dart';
@@ -26,6 +27,7 @@ class _NotificationItem {
     required this.subtitle,
     required this.time,
     this.avatarUrl,
+    this.actorId,
     this.isRead = false,
     this.actionable = false,
     this.entityId,
@@ -37,6 +39,7 @@ class _NotificationItem {
   final String subtitle;
   final String time;
   final String? avatarUrl;
+  final String? actorId;
   bool isRead;
   final bool actionable;
   /// Id of the thing the notification points at (clique session, trybe, post).
@@ -133,6 +136,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
       subtitle: actorName.isEmpty ? body : '${raw['title'] ?? ''}',
       time: _relativeTime(raw['createdAt']),
       avatarUrl: ApiService.media(actor['avatarUrl'] as String?),
+      actorId: actor['id'] as String? ?? raw['actorId'] as String?,
       isRead: raw['isRead'] == true,
       // Invites are the only notifications with something to accept.
       actionable: type == _NotifType.trybeInvite ||
@@ -416,8 +420,9 @@ class _NotificationsTabState extends State<NotificationsTab> {
 
   Widget _buildLeading(_NotificationItem item) {
     final iconSpec = _iconFor(item.type);
+    Widget content;
     if (item.avatarUrl != null) {
-      return Stack(
+      content = Stack(
         clipBehavior: Clip.none,
         children: [
           Container(
@@ -447,16 +452,25 @@ class _NotificationsTabState extends State<NotificationsTab> {
           ),
         ],
       );
+    } else {
+      content = Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: iconSpec.color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Icon(iconSpec.icon, color: iconSpec.color, size: 22),
+      );
     }
-    return Container(
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        color: iconSpec.color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Icon(iconSpec.icon, color: iconSpec.color, size: 22),
-    );
+
+    if (item.actorId != null && item.actorId!.isNotEmpty) {
+      return GestureDetector(
+        onTap: () => UserProfileScreen.navigate(context, item.actorId),
+        child: content,
+      );
+    }
+    return content;
   }
 
   Widget _buildNotificationCard(_NotificationItem item) {

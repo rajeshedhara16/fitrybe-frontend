@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
+import '../screens/user_profile_screen.dart';
 
 /// Avatar that tolerates the API returning a null/empty `avatarUrl`.
 ///
@@ -10,12 +11,18 @@ class UserAvatar extends StatelessWidget {
   final String? url;
   final String? fallbackName;
   final double radius;
+  final String? userId;
+  final VoidCallback? onTap;
+  final bool enableTapToProfile;
 
   const UserAvatar({
     super.key,
     required this.url,
     this.fallbackName,
     this.radius = 20,
+    this.userId,
+    this.onTap,
+    this.enableTapToProfile = false,
   });
 
   String get _initials {
@@ -31,7 +38,7 @@ class UserAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasImage = url != null && url!.trim().isNotEmpty;
 
-    return CircleAvatar(
+    final avatarWidget = CircleAvatar(
       radius: radius,
       backgroundColor: AppTheme.primaryOrange.withValues(alpha: 0.18),
       foregroundImage: hasImage ? NetworkImage(url!) : null,
@@ -45,5 +52,16 @@ class UserAvatar extends StatelessWidget {
         ),
       ),
     );
+
+    if (onTap != null) {
+      return GestureDetector(onTap: onTap, child: avatarWidget);
+    }
+    if (enableTapToProfile && userId != null && userId!.isNotEmpty) {
+      return GestureDetector(
+        onTap: () => UserProfileScreen.navigate(context, userId),
+        child: avatarWidget,
+      );
+    }
+    return avatarWidget;
   }
 }

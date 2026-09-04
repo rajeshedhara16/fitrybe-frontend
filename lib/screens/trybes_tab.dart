@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'chat_detail_screen.dart';
 import 'trybe_detail_screen.dart';
 import 'create_trybe_screen.dart';
+import 'user_profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
 import '../widgets/state_views.dart';
@@ -873,32 +874,38 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
         children: [
           Row(
             children: [
-              UserAvatar(
-                url: ApiService.media(author['avatarUrl'] as String?),
-                fallbackName: _nameOf(author),
-                radius: 20,
+              GestureDetector(
+                onTap: () => UserProfileScreen.navigate(context, author['id'] as String?),
+                child: UserAvatar(
+                  url: ApiService.media(author['avatarUrl'] as String?),
+                  fallbackName: _nameOf(author),
+                  radius: 20,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _nameOf(author),
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white,
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.bold,
+                child: GestureDetector(
+                  onTap: () => UserProfileScreen.navigate(context, author['id'] as String?),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _nameOf(author),
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    Text(
-                      '${_relativeTime(post['createdAt'])} • ${post['type'] ?? 'Update'}',
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white38,
-                        fontSize: 11.5,
+                      Text(
+                        '${_relativeTime(post['createdAt'])} • ${post['type'] ?? 'Update'}',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white38,
+                          fontSize: 11.5,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1170,7 +1177,6 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
     final name = _nameOf(friend);
     final avatar = ApiService.media(friend['avatarUrl'] as String?);
     final location = (friend['location'] as String?)?.trim();
-    final bio = (friend['bio'] as String?)?.trim();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1182,43 +1188,37 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
       ),
       child: Row(
         children: [
-          UserAvatar(url: avatar, fallbackName: name, radius: 23),
+          GestureDetector(
+            onTap: () => UserProfileScreen.navigate(context, friend['id'] as String?),
+            child: UserAvatar(url: avatar, fallbackName: name, radius: 23),
+          ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white,
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  (location == null || location.isEmpty)
-                      ? 'Fitrybe athlete'
-                      : location,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white38,
-                    fontSize: 11.5,
-                  ),
-                ),
-                if (bio != null && bio.isNotEmpty) ...[
-                  const SizedBox(height: 4),
+            child: GestureDetector(
+              onTap: () => UserProfileScreen.navigate(context, friend['id'] as String?),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    bio,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    name,
                     style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white54,
+                      color: Colors.white,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    (location == null || location.isEmpty)
+                        ? 'Fitrybe athlete'
+                        : location,
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white38,
                       fontSize: 11.5,
                     ),
                   ),
                 ],
-              ],
+              ),
             ),
           ),
           Row(

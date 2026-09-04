@@ -17,6 +17,7 @@ import 'customize_goal_screen.dart';
 import 'subscription_screen.dart';
 import 'messaging_screen.dart';
 import 'welcome_screen.dart';
+import 'user_profile_screen.dart';
 import '../services/socket_service.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
@@ -837,32 +838,44 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
-                UserAvatar(
-                  url: avatarUrl,
-                  fallbackName: authorName,
-                  radius: 20,
+                GestureDetector(
+                  onTap: () => UserProfileScreen.navigate(
+                    context,
+                    author['id'] as String? ?? post['authorId'] as String?,
+                  ),
+                  child: UserAvatar(
+                    url: avatarUrl,
+                    fallbackName: authorName,
+                    radius: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        authorName.isEmpty ? 'Fitrybe Athlete' : authorName,
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
+                  child: GestureDetector(
+                    onTap: () => UserProfileScreen.navigate(
+                      context,
+                      author['id'] as String? ?? post['authorId'] as String?,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          authorName.isEmpty ? 'Fitrybe Athlete' : authorName,
+                          style: GoogleFonts.hankenGrotesk(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'Recent • $locationTag',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 12,
+                        Text(
+                          'Recent • $locationTag',
+                          style: GoogleFonts.hankenGrotesk(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 IconButton(
@@ -1455,15 +1468,21 @@ class _HomeScreenState extends State<HomeScreen> {
                             itemCount: comments.length,
                             itemBuilder: (context, index) {
                               final comment = comments[index];
+                              final Map? authorMap = comment['author'] is Map ? comment['author'] as Map : null;
+                              final String? commentAuthorId = (comment['authorId'] ?? authorMap?['id'] ?? comment['userId'])?.toString();
+
                               return Padding(
                                 padding: const EdgeInsets.only(bottom: 20.0),
                                 child: Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    UserAvatar(
-                                      url: comment['avatar'],
-                                      fallbackName: comment['author'],
-                                      radius: 16,
+                                    GestureDetector(
+                                      onTap: () => UserProfileScreen.navigate(context, commentAuthorId),
+                                      child: UserAvatar(
+                                        url: comment['avatar'],
+                                        fallbackName: comment['author'],
+                                        radius: 16,
+                                      ),
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
@@ -1472,12 +1491,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                         children: [
                                           Row(
                                             children: [
-                                              Text(
-                                                comment['author'] ?? 'User',
-                                                style: GoogleFonts.hankenGrotesk(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 13.5,
+                                              GestureDetector(
+                                                onTap: () => UserProfileScreen.navigate(context, commentAuthorId),
+                                                child: Text(
+                                                  comment['author'] ?? 'User',
+                                                  style: GoogleFonts.hankenGrotesk(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 13.5,
+                                                  ),
                                                 ),
                                               ),
                                               const SizedBox(width: 8),
@@ -1850,35 +1872,41 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       child: Row(
         children: [
-          UserAvatar(
-            url: ApiService.media(user['avatarUrl'] as String?),
-            fallbackName: displayName,
-            radius: 22,
+          GestureDetector(
+            onTap: () => UserProfileScreen.navigate(context, userId),
+            child: UserAvatar(
+              url: ApiService.media(user['avatarUrl'] as String?),
+              fallbackName: displayName,
+              radius: 22,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  displayName,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
+            child: GestureDetector(
+              onTap: () => UserProfileScreen.navigate(context, userId),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayName,
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white54,
-                    fontSize: 12,
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white54,
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -2023,27 +2051,34 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Column(
         children: [
-          UserAvatar(url: imgUrl, fallbackName: name, radius: 28),
-          const SizedBox(height: 8),
-          Text(
-            name,
-            style: GoogleFonts.hankenGrotesk(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
+          GestureDetector(
+            onTap: () => UserProfileScreen.navigate(context, userId),
+            child: Column(
+              children: [
+                UserAvatar(url: imgUrl, fallbackName: name, radius: 28),
+                const SizedBox(height: 8),
+                Text(
+                  name,
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  location.toUpperCase(),
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white38,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
-            textAlign: TextAlign.center,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            location.toUpperCase(),
-            style: GoogleFonts.hankenGrotesk(
-              color: Colors.white38,
-              fontSize: 9,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
           ),
           const Spacer(),
           SizedBox(

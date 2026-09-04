@@ -14,7 +14,8 @@ import '../services/achievement_service.dart';
 import 'package:share_plus/share_plus.dart';
 
 class ProfileTab extends StatefulWidget {
-  const ProfileTab({super.key});
+  final String? userId;
+  const ProfileTab({super.key, this.userId});
 
   @override
   State<ProfileTab> createState() => _ProfileTabState();
@@ -33,10 +34,61 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   Map<String, dynamic> _stats = const {};
   Map<String, dynamic> _analytics = const {};
   List<Map<String, dynamic>> _myPosts = [];
+  Map<String, dynamic> _otherUser = {};
+  bool _isFollowing = false;
   bool _isLoading = true;
 
-  String? get _bannerUrl => SessionService().bannerUrl;
-  String? get _avatarUrl => SessionService().avatarUrl;
+  bool get _isOwnProfile =>
+      widget.userId == null || widget.userId == SessionService().userId;
+
+  String? get _targetUserId =>
+      _isOwnProfile ? SessionService().userId : widget.userId;
+
+  String? get _bannerUrl {
+    if (_isOwnProfile) return SessionService().bannerUrl;
+    return ApiService.media(_otherUser['bannerUrl'] as String? ?? _otherUser['banner'] as String?);
+  }
+
+  String? get _avatarUrl {
+    if (_isOwnProfile) return SessionService().avatarUrl;
+    return ApiService.media(_otherUser['avatarUrl'] as String? ?? _otherUser['avatar'] as String?);
+  }
+
+  String get _displayName {
+    if (_isOwnProfile) return SessionService().displayName;
+    final fn = '${_otherUser['firstName'] ?? ''}'.trim();
+    final ln = '${_otherUser['lastName'] ?? ''}'.trim();
+    final full = '$fn $ln'.trim();
+    if (full.isNotEmpty) return full;
+    return '${_otherUser['name'] ?? _otherUser['username'] ?? 'Fitrybe Athlete'}';
+  }
+
+  String? get _location {
+    final value = _isOwnProfile
+        ? (SessionService().user?['location'] as String?)?.trim()
+        : (_otherUser['location'] as String?)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
+  String? get _bio {
+    final value = _isOwnProfile
+        ? (SessionService().user?['bio'] as String?)?.trim()
+        : (_otherUser['bio'] as String?)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
+  String get _joinedLabel {
+    final raw = _isOwnProfile
+        ? (SessionService().user == null ? null : SessionService().user!['createdAt'])
+        : _otherUser['createdAt'];
+    final created = DateTime.tryParse('${raw ?? ''}');
+    if (created == null) return 'New member';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return 'Joined ${months[created.month - 1]} ${created.year}';
+  }
 
   @override
   void initState() {
@@ -49,31 +101,77 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     // Trigger progress circle animation on load
     _streakController.forward();
     _load();
-    AchievementService().sync();
+    if (_isOwnProfile) {
+      AchievementService().sync();
+    }
   }
 
   Future<void> _load() async {
-    final userId = SessionService().userId;
+    final userId = _targetUserId;
     if (userId == null) {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
 
-    final results = await Future.wait([
-      ApiService.getUserProfile(userId),
-      ApiService.getAnalytics(),
-      ApiService.getFeed(authorId: userId, limit: 30),
-    ]);
+    try {
+      if (_isOwnProfile) {
+        final results = await Future.wait([
+          ApiService.getUserProfile(userId),
+          ApiService.getAnalytics(),
+          ApiService.getFeed(authorId: userId, limit: 30),
+        ]);
 
-    if (!mounted) return;
-    final profile = results[0] as Map<String, dynamic>;
+        if (!mounted) return;
+        final profile = results[0] as Map<String, dynamic>;
+        final user = profile['user'] as Map<String, dynamic>?;
+        SessionService().update(user);
+        setState(() {
+          _stats = (profile['stats'] as Map?)?.cast<String, dynamic>() ?? const {};
+          _analytics = results[1] as Map<String, dynamic>;
+          _myPosts = results[2] as List<Map<String, dynamic>>;
+          _isLoading = false;
+        });
+      } else {
+        final results = await Future.wait([
+          ApiService.getUserProfile(userId),
+          ApiService.getFeed(authorId: userId, limit: 30),
+        ]);
+
+        if (!mounted) return;
+        final profile = results[0] as Map<String, dynamic>;
+        final user = (profile['user'] as Map?)?.cast<String, dynamic>() ?? const {};
+
+        setState(() {
+          _otherUser = user;
+          _stats = (profile['stats'] as Map?)?.cast<String, dynamic>() ?? const {};
+          _isFollowing = profile['isFollowing'] == true;
+          _myPosts = results[1] as List<Map<String, dynamic>>;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('ProfileTab _load error: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _toggleFollow() async {
+    final targetId = widget.userId;
+    if (targetId == null) return;
+    HapticFeedback.lightImpact();
+    final newStatus = !_isFollowing;
     setState(() {
-      SessionService().update(profile['user'] as Map<String, dynamic>?);
-      _stats = (profile['stats'] as Map?)?.cast<String, dynamic>() ?? const {};
-      _analytics = results[1] as Map<String, dynamic>;
-      _myPosts = results[2] as List<Map<String, dynamic>>;
-      _isLoading = false;
+      _isFollowing = newStatus;
+      final currentFollowers = (_stats['followerCount'] as num?)?.toInt() ?? 0;
+      final updatedStats = Map<String, dynamic>.from(_stats);
+      updatedStats['followerCount'] =
+          newStatus ? currentFollowers + 1 : (currentFollowers - 1).clamp(0, 999999);
+      _stats = updatedStats;
     });
+    final success = await ApiService.setFollowing(targetId, newStatus);
+    if (!success && mounted) {
+      _load();
+    }
   }
 
   /// Formats large follower counts as "1.2k".
@@ -81,27 +179,6 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     final v = (value ?? 0).toInt();
     if (v < 1000) return '$v';
     return '${(v / 1000).toStringAsFixed(1)}k';
-  }
-
-  String? get _location {
-    final value = (SessionService().user?['location'] as String?)?.trim();
-    return (value == null || value.isEmpty) ? null : value;
-  }
-
-  String? get _bio {
-    final value = (SessionService().user?['bio'] as String?)?.trim();
-    return (value == null || value.isEmpty) ? null : value;
-  }
-
-  String get _joinedLabel {
-    final created =
-        DateTime.tryParse('${SessionService().user?['createdAt'] ?? ''}');
-    if (created == null) return 'New member';
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    return 'Joined ${months[created.month - 1]} ${created.year}';
   }
 
   @override
@@ -211,7 +288,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     ),
                     child: UserAvatar(
                       url: _avatarUrl,
-                      fallbackName: SessionService().displayName,
+                      fallbackName: _displayName,
                       radius: 44,
                     ),
                   ),
@@ -219,7 +296,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
                   // Profile details
                   Text(
-                    SessionService().displayName,
+                    _displayName,
                     style: GoogleFonts.anybody(
                       color: Colors.white,
                       fontSize: 20,
@@ -253,7 +330,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
                   // Bio description
                   Text(
-                    _bio ?? 'Add a short bio to tell your Trybe who you are.',
+                    _bio ?? (_isOwnProfile ? 'Add a short bio to tell your Trybe who you are.' : 'No bio added yet.'),
                     textAlign: TextAlign.center,
                     style: GoogleFonts.hankenGrotesk(
                       color: _bio == null ? Colors.white38 : Colors.white70,
@@ -266,40 +343,69 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                   // CTAs
                   Row(
                     children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () {
-                            HapticFeedback.lightImpact();
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const EditProfileScreen(),
+                      if (_isOwnProfile) ...[
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const EditProfileScreen(),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: _accent,
+                                borderRadius: BorderRadius.circular(20),
                               ),
-                            );
-                          },
-                          child: Container(
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: _accent,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              'Edit Profile',
-                              style: GoogleFonts.hankenGrotesk(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13.5,
+                              alignment: Alignment.center,
+                              child: Text(
+                                'Edit Profile',
+                                style: GoogleFonts.hankenGrotesk(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13.5,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
+                        const SizedBox(width: 12),
+                      ] else ...[
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: _toggleFollow,
+                            child: Container(
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: _isFollowing ? Colors.transparent : _accent,
+                                borderRadius: BorderRadius.circular(20),
+                                border: _isFollowing ? Border.all(color: Colors.white24) : null,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _isFollowing ? 'Following' : 'Follow',
+                                style: GoogleFonts.hankenGrotesk(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13.5,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
                       Expanded(
                         child: GestureDetector(
                           onTap: () {
                             HapticFeedback.lightImpact();
+                            SharePlus.instance.share(ShareParams(
+                              text: "Check out $_displayName's profile on FiTrybe! 💪",
+                            ));
                           },
                           child: Container(
                             height: 40,
@@ -1037,7 +1143,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'My Posts',
+          _isOwnProfile ? 'My Posts' : 'Posts',
           style: GoogleFonts.anybody(
             color: Colors.white,
             fontSize: 16,
@@ -1054,9 +1160,10 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           EmptyStateView(
             padding: const EdgeInsets.symmetric(vertical: 20),
             icon: Icons.post_add_rounded,
-            title: 'You have not posted yet',
-            message:
-                'Share a workout, a milestone, or a photo and it will appear here.',
+            title: _isOwnProfile ? 'You have not posted yet' : 'No posts yet',
+            message: _isOwnProfile
+                ? 'Share a workout, a milestone, or a photo and it will appear here.'
+                : 'This user has not created any posts yet.',
           )
         else
           ..._myPosts.map((post) => Padding(
@@ -1102,6 +1209,8 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
       timeAgo = '${diff.inDays}d ago';
     }
 
+    final isAuthorMe = _isOwnProfile || post['authorId'] == SessionService().userId;
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20),
       decoration: BoxDecoration(
@@ -1117,7 +1226,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
             children: [
               UserAvatar(
                 url: _avatarUrl,
-                fallbackName: SessionService().displayName,
+                fallbackName: _displayName,
                 radius: 20,
               ),
               const SizedBox(width: 12),
@@ -1128,7 +1237,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     Row(
                       children: [
                         Text(
-                          SessionService().displayName,
+                          _displayName,
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white,
                             fontSize: 15,
@@ -1183,44 +1292,45 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 ),
               ),
               // Three-dot menu
-              PopupMenuButton<String>(
-                onSelected: (value) async {
-                  HapticFeedback.lightImpact();
-                  if (value == 'delete') {
-                    // Drop it locally first, then reconcile with the server.
-                    setState(() => _myPosts
-                        .removeWhere((p) => '${p['id']}' == postId));
-                    final ok = await ApiService.deletePost(postId);
-                    if (!ok) _load();
-                  }
-                },
-                color: const Color(0xFF1E1E22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                icon: const Icon(
-                  Icons.more_vert_rounded,
-                  color: Colors.white30,
-                  size: 18,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete_outline_rounded, color: _accent, size: 16),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Delete Post',
-                          style: GoogleFonts.hankenGrotesk(color: _accent, fontSize: 13),
-                        ),
-                      ],
-                    ),
+              if (isAuthorMe)
+                PopupMenuButton<String>(
+                  onSelected: (value) async {
+                    HapticFeedback.lightImpact();
+                    if (value == 'delete') {
+                      // Drop it locally first, then reconcile with the server.
+                      setState(() => _myPosts
+                          .removeWhere((p) => '${p['id']}' == postId));
+                      final ok = await ApiService.deletePost(postId);
+                      if (!ok) _load();
+                    }
+                  },
+                  color: const Color(0xFF1E1E22),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                ],
-              ),
+                  icon: const Icon(
+                    Icons.more_vert_rounded,
+                    color: Colors.white30,
+                    size: 18,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_outline_rounded, color: _accent, size: 16),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Delete Post',
+                            style: GoogleFonts.hankenGrotesk(color: _accent, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
 
