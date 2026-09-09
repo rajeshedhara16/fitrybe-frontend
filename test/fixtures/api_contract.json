@@ -1,0 +1,211 @@
+{
+  "generatedAt": "2026-09-07T23:39:46.883Z",
+  "note": "Captured from the live API by scripts/dump_contract_fixture.js.",
+  "goals": {
+    "goals": [
+      {
+        "id": "e45dd3c7-6106-40bc-bb6e-407341b3b94e",
+        "userId": "123c3c12-c395-4e5f-a8f9-e691d1f94dd5",
+        "activity": "Running",
+        "metric": "Distance",
+        "targetValue": 5,
+        "unit": "Km",
+        "frequency": "Daily",
+        "period": "DAILY",
+        "targetSteps": 10000,
+        "targetDistance": 5,
+        "targetCalories": 500,
+        "targetWorkouts": 4,
+        "createdAt": "2026-09-07T23:39:46.537Z",
+        "updatedAt": "2026-09-07T23:39:46.537Z"
+      },
+      {
+        "id": "06ae2ab6-c006-4d91-b6c8-8489ce56b253",
+        "userId": "123c3c12-c395-4e5f-a8f9-e691d1f94dd5",
+        "activity": "Swimming",
+        "metric": "Sessions",
+        "targetValue": 8,
+        "unit": "Sessions",
+        "frequency": "Monthly",
+        "period": "MONTHLY",
+        "targetSteps": 10000,
+        "targetDistance": 25,
+        "targetCalories": 500,
+        "targetWorkouts": 8,
+        "createdAt": "2026-09-07T23:39:46.583Z",
+        "updatedAt": "2026-09-07T23:39:46.583Z"
+      },
+      {
+        "id": "4abf3a7b-1626-497c-b6bb-db8964fb5b63",
+        "userId": "123c3c12-c395-4e5f-a8f9-e691d1f94dd5",
+        "activity": "Cycling",
+        "metric": "Distance",
+        "targetValue": 50,
+        "unit": "Km",
+        "frequency": "Weekly",
+        "period": "WEEKLY",
+        "targetSteps": 10000,
+        "targetDistance": 50,
+        "targetCalories": 500,
+        "targetWorkouts": 4,
+        "createdAt": "2026-09-07T23:39:46.573Z",
+        "updatedAt": "2026-09-07T23:39:46.573Z"
+      }
+    ],
+    "goal": {
+      "id": "4abf3a7b-1626-497c-b6bb-db8964fb5b63",
+      "userId": "123c3c12-c395-4e5f-a8f9-e691d1f94dd5",
+      "activity": "Cycling",
+      "metric": "Distance",
+      "targetValue": 50,
+      "unit": "Km",
+      "frequency": "Weekly",
+      "period": "WEEKLY",
+      "targetSteps": 10000,
+      "targetDistance": 50,
+      "targetCalories": 500,
+      "targetWorkouts": 4,
+      "createdAt": "2026-09-07T23:39:46.573Z",
+      "updatedAt": "2026-09-07T23:39:46.573Z"
+    }
+  },
+  "analytics": {
+    "summary": {
+      "totalDistanceKm": 89.7,
+      "totalDurationHours": 5.5,
+      "totalCalories": 3920,
+      "totalWorkouts": 7
+    },
+    "weekly": {
+      "distanceKm": 89.7,
+      "durationMins": 330,
+      "calories": 3920,
+      "workoutCount": 7
+    },
+    "recentActivities": [
+      {
+        "id": "6a77b2a8-06ed-4ad6-a198-33988a70a0fb",
+        "type": "Gym Workout",
+        "title": "Weights",
+        "duration": 2700,
+        "distance": 0,
+        "calories": 300,
+        "avgPace": null,
+        "createdAt": "2026-09-07T23:39:46.659Z"
+      },
+      {
+        "id": "7e3b653e-a5f2-4f24-b84b-271cdce3acd7",
+        "type": "Swimming",
+        "title": "Pool",
+        "duration": 1200,
+        "distance": 1000,
+        "calories": 250,
+        "avgPace": 20,
+        "createdAt": "2026-09-07T23:39:46.652Z"
+      },
+      {
+        "id": "2e64b822-f6a6-4afd-88ab-e7d113a4cb30",
+        "type": "Swimming",
+        "title": "Pool",
+        "duration": 1500,
+        "distance": 1200,
+        "calories": 300,
+        "avgPace": 20.83,
+        "createdAt": "2026-09-07T23:39:46.644Z"
+      },
+      {
+        "id": "b24e663f-7724-4733-b067-f408af2d7aea",
+        "type": "Swimming",
+        "title": "Pool",
+        "duration": 1800,
+        "distance": 1500,
+        "calories": 350,
+        "avgPace": 20,
+        "createdAt": "2026-09-07T23:39:46.635Z"
+      },
+      {
+        "id": "2557e577-8832-4777-ade9-bc30470250da",
+        "type": "Cycling",
+        "title": "Long ride",
+        "duration": 5400,
+        "distance": 60000,
+        "calories": 900,
+        "avgPace": 1.5,
+        "createdAt": "2026-09-07T23:39:46.627Z"
+      },
+      {
+        "id": "9ad25286-6b3c-4686-96a4-f4c9a950fb79",
+        "type": "Walking",
+        "title": "Long walk",
+        "duration": 5400,
+        "distance": 20000,
+        "calories": 1400,
+        "avgPace": 4.5,
+        "createdAt": "2026-09-07T23:39:46.617Z"
+      },
+      {
+        "id": "ee9619d8-4eca-4e5a-bac2-0aa62bce0f81",
+        "type": "Running",
+        "title": "Morning run",
+        "duration": 1800,
+        "distance": 6000,
+        "calories": 420,
+        "avgPace": 5,
+        "createdAt": "2026-09-07T23:39:46.595Z"
+      }
+    ],
+    "windowDays": 730,
+    "records": [
+      {
+        "type": "Swimming",
+        "sessions": 3,
+        "longestDistanceKm": 1.5,
+        "longestDurationSecs": 1800,
+        "mostCalories": 350,
+        "bestPace": 20,
+        "totalDistanceKm": 3.7,
+        "totalDurationSecs": 4500
+      },
+      {
+        "type": "Cycling",
+        "sessions": 1,
+        "longestDistanceKm": 60,
+        "longestDurationSecs": 5400,
+        "mostCalories": 900,
+        "bestPace": 1.5,
+        "totalDistanceKm": 60,
+        "totalDurationSecs": 5400
+      },
+      {
+        "type": "Gym Workout",
+        "sessions": 1,
+        "longestDistanceKm": 0,
+        "longestDurationSecs": 2700,
+        "mostCalories": 300,
+        "bestPace": null,
+        "totalDistanceKm": 0,
+        "totalDurationSecs": 2700
+      },
+      {
+        "type": "Walking",
+        "sessions": 1,
+        "longestDistanceKm": 20,
+        "longestDurationSecs": 5400,
+        "mostCalories": 1400,
+        "bestPace": 4.5,
+        "totalDistanceKm": 20,
+        "totalDurationSecs": 5400
+      },
+      {
+        "type": "Running",
+        "sessions": 1,
+        "longestDistanceKm": 6,
+        "longestDurationSecs": 1800,
+        "mostCalories": 420,
+        "bestPace": 5,
+        "totalDistanceKm": 6,
+        "totalDurationSecs": 1800
+      }
+    ]
+  }
+}

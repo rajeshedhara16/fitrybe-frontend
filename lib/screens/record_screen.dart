@@ -37,7 +37,6 @@ class _RecordScreenState extends State<RecordScreen>
       'Cycling',
       'Walking',
       'Hiking',
-      'Trail Running',
       'Roller Skating',
       'Skateboarding',
       'Swimming',
@@ -330,6 +329,7 @@ class _RecordScreenState extends State<RecordScreen>
   }
 
   Future<void> _loadRecentActivities() async {
+    // No userId means the caller's own activities, private ones included.
     final activities = await ApiService.getActivities(limit: 30);
     if (!mounted) return;
     setState(() {
@@ -353,7 +353,6 @@ class _RecordScreenState extends State<RecordScreen>
       {'name': 'Running', 'icon': Icons.directions_run_rounded, 'cat': 'distance'},
       {'name': 'Hiking', 'icon': Icons.hiking_rounded, 'cat': 'distance'},
       {'name': 'Cycling', 'icon': Icons.pedal_bike_rounded, 'cat': 'distance'},
-      {'name': 'Trail Running', 'icon': Icons.terrain_rounded, 'cat': 'distance'},
       {'name': 'Roller Skating', 'icon': Icons.roller_skating_rounded, 'cat': 'distance'},
       {'name': 'Skateboarding', 'icon': Icons.skateboarding_rounded, 'cat': 'distance'},
       {'name': 'Swimming', 'icon': Icons.pool_rounded, 'cat': 'distance'},
@@ -1531,6 +1530,9 @@ class _ActivityLog {
     return _ActivityLog(
       activityName: '${a['title'] ?? type}',
       activityIcon: switch (type.toLowerCase()) {
+        // 'trail running' is retired — the migration folds those rows into
+        // Running — but this is display only, so it costs nothing to keep the
+        // mapping for anything the migration has not reached yet.
         'run' || 'running' || 'trail running' => Icons.directions_run_rounded,
         'ride' || 'cycling' => Icons.pedal_bike_rounded,
         'walk' || 'walking' => Icons.directions_walk_rounded,

@@ -331,26 +331,15 @@ class _NotificationsTabState extends State<NotificationsTab> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Notifications',
-              style: GoogleFonts.hankenGrotesk(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
+        Expanded(
+          child: Text(
+            'Stay on top of your Trybe activity.',
+            style: GoogleFonts.hankenGrotesk(
+              color: Colors.white70,
+              fontSize: 14.5,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 2),
-            Text(
-              'Stay on top of your Trybe activity.',
-              style: GoogleFonts.hankenGrotesk(
-                color: Colors.white38,
-                fontSize: 12.5,
-              ),
-            ),
-          ],
+          ),
         ),
         GestureDetector(
           onTap: _hasUnread ? _markAllRead : null,

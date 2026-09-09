@@ -14,13 +14,14 @@ import 'create_post_screen.dart';
 import 'create_trybe_screen.dart';
 import 'create_clique_activity_screen.dart';
 import 'customize_goal_screen.dart';
-import 'subscription_screen.dart';
 import 'messaging_screen.dart';
-import 'welcome_screen.dart';
 import 'user_profile_screen.dart';
+import 'post_detail_screen.dart';
+import 'settings_screen.dart';
+
 import '../services/socket_service.dart';
-import '../services/api_client.dart';
 import '../services/api_service.dart';
+import '../services/goal_progress.dart';
 import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/notification_service.dart';
@@ -57,8 +58,14 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Comment threads keyed by post id, filled from the API on demand.
   final Map<String, List<Map<String, String>>> _postComments = {};
 
+  /// Optimistic like state for posts touched this session. Cleared whenever the
+  /// feed is reloaded so the server's `likedByMe` and `likeCount` win again.
   final Map<String, int> _userPostLikes = {};
   final Set<String> _likedUserPostIds = {};
+
+  /// Posts unliked this session. Without this, a post the server still reports
+  /// as liked would spring back to liked on the next rebuild.
+  final Set<String> _unlikedUserPostIds = {};
 
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
@@ -102,6 +109,13 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _backendPosts = posts;
         _isFeedLoading = false;
+        // The response is the truth now. Dropping this session's optimistic
+        // overrides means a like that silently failed cannot keep showing as
+        // applied after a refresh.
+        _likedUserPostIds.clear();
+        _unlikedUserPostIds.clear();
+        _userPostLikes.clear();
+        _postComments.clear();
       });
     } catch (e) {
       debugPrint('FitRybe feed load error: $e');
@@ -431,7 +445,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                         icon: const Icon(Icons.settings_outlined, color: Colors.white),
                                         onPressed: () {
                                           HapticFeedback.lightImpact();
-                                          _showSettingsBottomSheet(context);
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => const SettingsScreen(),
+                                            ),
+                                          );
                                         },
                                       ),
                                       const SizedBox(width: 8),
@@ -590,132 +609,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
 
-  void _showSettingsBottomSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF131316),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF131316),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 36,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Settings',
-                    style: GoogleFonts.anybody(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildSettingsItem(
-                    Icons.stars_rounded,
-                    'Trybe Pro Premium',
-                    () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const SubscriptionScreen(),
-                        ),
-                      );
-                    },
-                    color: _accent,
-                  ),
-                  _buildSettingsItem(
-                    Icons.person_outline_rounded,
-                    'Account Settings',
-                    () {
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingsItem(
-                    Icons.notifications_none_rounded,
-                    'Notifications',
-                    () {
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingsItem(
-                    Icons.privacy_tip_outlined,
-                    'Privacy & Sharing',
-                    () {
-                      Navigator.pop(context);
-                    },
-                  ),
-                  _buildSettingsItem(
-                    Icons.help_outline_rounded,
-                    'Help & Support',
-                    () {
-                      Navigator.pop(context);
-                    },
-                  ),
-                  const Divider(color: Colors.white10, height: 24),
-                  _buildSettingsItem(
-                    Icons.logout_rounded,
-                    'Log Out',
-                    () async {
-                      final nav = Navigator.of(context);
-                      nav.pop();
-                      await ApiClient().clearTokens();
-                      nav.pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-                        (route) => false,
-                      );
-                    },
-                    color: Colors.red.shade400,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 
-  Widget _buildSettingsItem(IconData icon, String title, VoidCallback onTap, {Color color = Colors.white70}) {
-    return ListTile(
-      leading: Icon(icon, color: color, size: 22),
-      title: Text(
-        title,
-        style: GoogleFonts.hankenGrotesk(
-          color: color,
-          fontSize: 14.5,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white24, size: 18),
-      onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-    );
-  }
 
   Widget _buildCurrentTab() {
     // Search takes over the body while it is open, on whichever tab.
@@ -741,6 +635,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildWeeklyStats(),
+                    _buildGrowYourTrybeSection(),
                     if (_isFeedLoading)
                       const Padding(
                         padding: EdgeInsets.symmetric(vertical: 60),
@@ -776,7 +671,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       )
                     else
                       ...visiblePosts.map(_buildBackendPostCard),
-                    _buildGrowYourTrybeSection(),
                     const SizedBox(height: 100),
                   ],
                 ),
@@ -819,9 +713,18 @@ class _HomeScreenState extends State<HomeScreen> {
     final Map<String, dynamic>? activity = (post['activity'] is Map) ? Map<String, dynamic>.from(post['activity']) : null;
     final String locationTag = post['locationTag'] ?? 'Fitrybe Feed';
 
-    final bool isLiked = _likedUserPostIds.contains(postId) || (post['likedByMe'] == true);
+    // Local sets hold only what this session changed; anything untouched falls
+    // back to what the server said. Both are cleared on refresh so a reload
+    // cannot be overridden by stale optimistic state.
+    final bool isLiked = _likedUserPostIds.contains(postId) ||
+        (!_unlikedUserPostIds.contains(postId) && post['likedByMe'] == true);
     final int kudosCount = (_userPostLikes[postId] ?? (post['likeCount'] as int? ?? 0));
-    final List commentsList = _postComments[postId] ?? [];
+
+    // Once the thread has been opened its local length is authoritative, since
+    // it includes anything just posted. Until then the feed shows the server's
+    // count rather than zero.
+    final int commentCount =
+        _postComments[postId]?.length ?? (post['commentCount'] as int? ?? 0);
 
     return Container(
       decoration: BoxDecoration(
@@ -901,198 +804,207 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
 
           // Caption & Description (Tighter gap below author name)
-          if (caption.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
-              child: Text(
-                caption,
-                style: GoogleFonts.hankenGrotesk(
-                  color: Colors.white,
-                  fontSize: 14.5,
-                  height: 1.4,
-                ),
-              ),
-            ),
-
-          // Activity image - rendered ONLY if an image is present.
-          Builder(
-            builder: (context) {
-              final String? displayImageUrl = imageUrls.isEmpty
-                  ? null
-                  : ApiService.media('${imageUrls.first}');
-              final String activityTitle = (activity?['title'] ?? activity?['type'] ?? activity?['name'] ?? post['type'] ?? 'Workout').toString();
-
-              if (displayImageUrl == null) {
-                // If there's no image but there's a real activity attached, show a clean metrics card.
-                if (activity != null && (activity['distance'] != null || activity['avgPace'] != null)) {
-                  final double distKm = ((activity['distance'] as num?)?.toDouble() ?? 0) / 1000.0;
-                  final String paceStr = (activity['avgPace'] as String?) ?? '0:00';
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: _cardBg,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => PostDetailScreen.navigate(context, post),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (caption.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                    child: Text(
+                      caption,
+                      style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white,
+                        fontSize: 14.5,
+                        height: 1.4,
                       ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.directions_run_rounded, color: _accent, size: 24),
-                          const SizedBox(width: 12),
-                          if (activity['distance'] != null) ...[
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(activityTitle.toUpperCase(), style: GoogleFonts.hankenGrotesk(fontSize: 9.5, color: _accent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                                const SizedBox(height: 1),
-                                Text('DISTANCE', style: GoogleFonts.hankenGrotesk(fontSize: 8.5, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                                Text('${distKm.toStringAsFixed(1)} km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                            const SizedBox(width: 24),
-                          ],
-                          if (activity['avgPace'] != null) ...[
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('PACE', style: GoogleFonts.hankenGrotesk(fontSize: 9, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                                Text('$paceStr /km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                return const SizedBox.shrink();
-              }
-
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: AspectRatio(
-                    aspectRatio: 4 / 5,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: Image.network(
-                            displayImageUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) => Container(
-                              color: _cardBg,
-                              child: const Center(
-                                child: Icon(Icons.broken_image_rounded, color: Colors.white24, size: 48),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black.withValues(alpha: 0.5),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (activity != null)
-                          Positioned(
-                            bottom: 20,
-                            left: 16,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (activity['distance'] != null)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.5),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(color: Colors.white10),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          activityTitle.toUpperCase(),
-                                          style: GoogleFonts.hankenGrotesk(
-                                            fontSize: 9.5,
-                                            color: _accent,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 1),
-                                        Text(
-                                          'DISTANCE',
-                                          style: GoogleFonts.hankenGrotesk(
-                                            fontSize: 8.5,
-                                            color: Colors.white70,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                        Text(
-                                          '${(((activity['distance'] as num?)?.toDouble() ?? 0) / 1000.0).toStringAsFixed(1)} km',
-                                          style: GoogleFonts.anybody(
-                                            fontSize: 16,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                if (activity['avgPace'] != null) ...[
-                                  const SizedBox(height: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(alpha: 0.5),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(color: Colors.white10),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          'PACE',
-                                          style: GoogleFonts.hankenGrotesk(
-                                            fontSize: 9,
-                                            color: Colors.white70,
-                                            fontWeight: FontWeight.bold,
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                        Text(
-                                          '${activity['avgPace']} /km',
-                                          style: GoogleFonts.anybody(
-                                            fontSize: 16,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                      ],
                     ),
                   ),
+
+                // Activity image - rendered ONLY if an image is present.
+                Builder(
+                  builder: (context) {
+                    final String? displayImageUrl = imageUrls.isEmpty
+                        ? null
+                        : ApiService.media('${imageUrls.first}');
+                    final String activityTitle = (activity?['title'] ?? activity?['type'] ?? activity?['name'] ?? post['type'] ?? 'Workout').toString();
+
+                    if (displayImageUrl == null) {
+                      // If there's no image but there's a real activity attached, show a clean metrics card.
+                      if (activity != null && (activity['distance'] != null || activity['avgPace'] != null)) {
+                        final double distKm = _parseDistKm(activity['distance']);
+                        final String paceStr = _formatPace(activity['avgPace']);
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: _cardBg,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.directions_run_rounded, color: _accent, size: 24),
+                                const SizedBox(width: 12),
+                                if (activity['distance'] != null) ...[
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(activityTitle.toUpperCase(), style: GoogleFonts.hankenGrotesk(fontSize: 9.5, color: _accent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                      const SizedBox(height: 1),
+                                      Text('DISTANCE', style: GoogleFonts.hankenGrotesk(fontSize: 8.5, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                      Text('${distKm.toStringAsFixed(1)} km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                  const SizedBox(width: 24),
+                                ],
+                                if (activity['avgPace'] != null) ...[
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('PACE', style: GoogleFonts.hankenGrotesk(fontSize: 9, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                                      Text('$paceStr /km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    }
+
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: AspectRatio(
+                          aspectRatio: 4 / 5,
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Image.network(
+                                  displayImageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) => Container(
+                                    color: _cardBg,
+                                    child: const Center(
+                                      child: Icon(Icons.broken_image_rounded, color: Colors.white24, size: 48),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Colors.black.withValues(alpha: 0.5),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (activity != null)
+                                Positioned(
+                                  bottom: 20,
+                                  left: 16,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (activity['distance'] != null)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withValues(alpha: 0.5),
+                                            borderRadius: BorderRadius.circular(10),
+                                            border: Border.all(color: Colors.white10),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                activityTitle.toUpperCase(),
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  fontSize: 9.5,
+                                                  color: _accent,
+                                                  fontWeight: FontWeight.bold,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 1),
+                                              Text(
+                                                'DISTANCE',
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  fontSize: 8.5,
+                                                  color: Colors.white70,
+                                                  fontWeight: FontWeight.bold,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                              Text(
+                                                '${_parseDistKm(activity['distance']).toStringAsFixed(1)} km',
+                                                style: GoogleFonts.anybody(
+                                                  fontSize: 16,
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      if (activity['avgPace'] != null) ...[
+                                        const SizedBox(height: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withValues(alpha: 0.5),
+                                            borderRadius: BorderRadius.circular(10),
+                                            border: Border.all(color: Colors.white10),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'PACE',
+                                                style: GoogleFonts.hankenGrotesk(
+                                                  fontSize: 9,
+                                                  color: Colors.white70,
+                                                  fontWeight: FontWeight.bold,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                              Text(
+                                                '${_formatPace(activity['avgPace'])} /km',
+                                                style: GoogleFonts.anybody(
+                                                  fontSize: 16,
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ],
+            ),
           ),
 
           const SizedBox(height: 8),
@@ -1112,9 +1024,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         setState(() {
                           if (newLiked) {
                             _likedUserPostIds.add(postId);
+                            _unlikedUserPostIds.remove(postId);
                             _userPostLikes[postId] = kudosCount + 1;
                           } else {
                             _likedUserPostIds.remove(postId);
+                            _unlikedUserPostIds.add(postId);
                             _userPostLikes[postId] = (kudosCount - 1).clamp(0, 999999);
                           }
                         });
@@ -1124,9 +1038,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           setState(() {
                             if (newLiked) {
                               _likedUserPostIds.remove(postId);
+                              _unlikedUserPostIds.add(postId);
                               _userPostLikes[postId] = kudosCount;
                             } else {
                               _likedUserPostIds.add(postId);
+                              _unlikedUserPostIds.remove(postId);
                               _userPostLikes[postId] = kudosCount;
                             }
                           });
@@ -1139,9 +1055,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: isLiked ? _accent : Colors.white60,
                             size: 20,
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Text(
-                            '$kudosCount Likes',
+                            '$kudosCount',
                             style: GoogleFonts.hankenGrotesk(
                               color: isLiked ? _accent : Colors.white70,
                               fontWeight: FontWeight.bold,
@@ -1153,7 +1069,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(width: 24),
                     GestureDetector(
-                      onTap: () => _showCommentsBottomSheet(context, postId),
+                      onTap: () => PostDetailScreen.navigate(context, post),
                       child: Row(
                         children: [
                           const Icon(
@@ -1161,9 +1077,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: Colors.white60,
                             size: 18,
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Text(
-                            '${commentsList.length} Comments',
+                            '$commentCount',
                             style: GoogleFonts.hankenGrotesk(
                               color: Colors.white70,
                               fontWeight: FontWeight.bold,
@@ -1236,19 +1152,23 @@ class _HomeScreenState extends State<HomeScreen> {
               // Device health data is authoritative when present; otherwise
               // fall back to workouts recorded through the app itself.
               Builder(builder: (context) {
-                final weekly = (_analytics['weekly'] is Map)
-                    ? Map<String, dynamic>.from(_analytics['weekly'])
-                    : const <String, dynamic>{};
+                // Counted from Monday in the athlete's own days, the same week
+                // the health service and the goal rings use. The server's
+                // `weekly` block is a rolling seven days, so falling back to it
+                // put a different week behind the same three labels.
+                final logged = GoalProgress.weekToDateTotals(
+                  _analytics['recentActivities'] as List<dynamic>? ?? const [],
+                );
 
                 final workouts = health.weeklyWorkoutsCount > 0
                     ? health.weeklyWorkoutsCount
-                    : (weekly['workoutCount'] as num? ?? 0).toInt();
+                    : logged.workouts;
                 final distanceKm = health.weeklyDistanceKm > 0
                     ? health.weeklyDistanceKm
-                    : (weekly['distanceKm'] as num? ?? 0).toDouble();
+                    : double.parse(logged.distanceKm.toStringAsFixed(2));
                 final calories = health.weeklyCalories > 0
                     ? health.weeklyCalories
-                    : (weekly['calories'] as num? ?? 0).toInt();
+                    : logged.calories;
 
                 return Row(
                   children: [
@@ -1322,278 +1242,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Condenses a timestamp into the "2h ago" style the feed already uses.
-  static String _relativeTime(dynamic isoString) {
-    final parsed = DateTime.tryParse('${isoString ?? ''}');
-    if (parsed == null) return 'Just now';
-    final diff = DateTime.now().difference(parsed);
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return '${(diff.inDays / 7).floor()}w ago';
-  }
 
-  /// Flattens an API comment into the flat map the sheet renders.
-  Map<String, String> _normalizeComment(Map<String, dynamic> raw) {
-    final author = (raw['author'] is Map)
-        ? Map<String, dynamic>.from(raw['author'])
-        : const <String, dynamic>{};
-    final name =
-        '${author['firstName'] ?? ''} ${author['lastName'] ?? ''}'.trim();
-    return {
-      'author': name.isEmpty ? 'Fitrybe Athlete' : name,
-      'avatar': ApiService.media(author['avatarUrl'] as String?) ?? '',
-      'text': '${raw['text'] ?? ''}',
-      'time': _relativeTime(raw['createdAt']),
-    };
-  }
 
-  void _showCommentsBottomSheet(BuildContext context, String postId) {
-    final textController = TextEditingController();
-    final scrollController = ScrollController();
-    HapticFeedback.mediumImpact();
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF131316),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        bool isLoading = true;
-        bool isSending = false;
 
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final comments = _postComments[postId] ?? [];
 
-            // Pull the real thread the first time the sheet is laid out.
-            if (isLoading) {
-              ApiService.getComments(postId).then((fetched) {
-                if (!mounted) return;
-                final mapped = fetched.map(_normalizeComment).toList();
-                setState(() => _postComments[postId] = mapped);
-                isLoading = false;
-                setSheetState(() {});
-              }).catchError((_) {
-                isLoading = false;
-                setSheetState(() {});
-              });
-            }
-
-            Future<void> submitComment() async {
-              final text = textController.text.trim();
-              if (text.isEmpty || isSending) return;
-              HapticFeedback.lightImpact();
-              isSending = true;
-              setSheetState(() {});
-
-              final created = await ApiService.addComment(postId, text);
-              if (!mounted) return;
-              if (created != null) {
-                setState(() {
-                  _postComments
-                      .putIfAbsent(postId, () => [])
-                      .add(_normalizeComment(created));
-                });
-                textController.clear();
-              }
-              isSending = false;
-              setSheetState(() {});
-
-              Timer(const Duration(milliseconds: 100), () {
-                if (scrollController.hasClients) {
-                  scrollController.animateTo(
-                    scrollController.position.maxScrollExtent,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOut,
-                  );
-                }
-              });
-            }
-
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.7,
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-              ),
-              child: Column(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 4,
-                    margin: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Comments (${comments.length})',
-                          style: GoogleFonts.hankenGrotesk(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(color: Colors.white10),
-                  Expanded(
-                    child: isLoading
-                        ? const LoadingStateView()
-                        : comments.isEmpty
-                        ? Center(
-                            child: Text(
-                              'No comments yet. Be the first to comment!',
-                              style: GoogleFonts.hankenGrotesk(color: Colors.white30, fontSize: 13),
-                            ),
-                          )
-                        : ListView.builder(
-                            controller: scrollController,
-                            physics: const BouncingScrollPhysics(),
-                            padding: const EdgeInsets.all(20),
-                            itemCount: comments.length,
-                            itemBuilder: (context, index) {
-                              final comment = comments[index];
-                              final Map? authorMap = comment['author'] is Map ? comment['author'] as Map : null;
-                              final String? commentAuthorId = (comment['authorId'] ?? authorMap?['id'] ?? comment['userId'])?.toString();
-
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 20.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    GestureDetector(
-                                      onTap: () => UserProfileScreen.navigate(context, commentAuthorId),
-                                      child: UserAvatar(
-                                        url: comment['avatar'],
-                                        fallbackName: comment['author'],
-                                        radius: 16,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              GestureDetector(
-                                                onTap: () => UserProfileScreen.navigate(context, commentAuthorId),
-                                                child: Text(
-                                                  comment['author'] ?? 'User',
-                                                  style: GoogleFonts.hankenGrotesk(
-                                                    color: Colors.white,
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 13.5,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                comment['time'] ?? 'Just now',
-                                                style: GoogleFonts.hankenGrotesk(
-                                                  color: Colors.white30,
-                                                  fontSize: 11,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            comment['text'] ?? '',
-                                            style: GoogleFonts.hankenGrotesk(
-                                              color: Colors.white70,
-                                              fontSize: 13,
-                                              height: 1.35,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                  const Divider(color: Colors.white10, height: 1),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    color: const Color(0xFF131316),
-                    child: Row(
-                      children: [
-                        UserAvatar(
-                          url: SessionService().avatarUrl,
-                          fallbackName: SessionService().displayName,
-                          radius: 16,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Container(
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.04),
-                              borderRadius: BorderRadius.circular(21),
-                              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: textController,
-                                    style: GoogleFonts.hankenGrotesk(color: Colors.white, fontSize: 13),
-                                    decoration: InputDecoration(
-                                      hintText: 'Add a comment...',
-                                      hintStyle: GoogleFonts.hankenGrotesk(color: Colors.white30, fontSize: 13),
-                                      border: InputBorder.none,
-                                      isDense: true,
-                                    ),
-                                  ),
-                                ),
-                                GestureDetector(
-                                  onTap: submitComment,
-                                  child: isSending
-                                      ? SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: _accent,
-                                          ),
-                                        )
-                                      : Icon(Icons.send_rounded,
-                                          color: _accent, size: 20),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
 
 
   void _showPostOptions({
@@ -1958,6 +1611,25 @@ class _HomeScreenState extends State<HomeScreen> {
         _unfollowedUsers.remove(userId);
       }
     });
+  }
+
+  static String _formatPace(dynamic rawPace) {
+    if (rawPace == null) return '0:00';
+    final str = rawPace.toString().trim();
+    if (str.isEmpty) return '0:00';
+    if (str.contains(':')) return str;
+    final numVal = double.tryParse(str);
+    if (numVal == null || numVal <= 0 || numVal.isInfinite || numVal.isNaN) return '0:00';
+    final mins = numVal.floor();
+    final secs = ((numVal - mins) * 60).round();
+    return '$mins:${secs.toString().padLeft(2, '0')}';
+  }
+
+  static double _parseDistKm(dynamic distVal) {
+    final num? val = (distVal as num?);
+    if (val == null) return 0.0;
+    final d = val.toDouble();
+    return d > 100 ? d / 1000.0 : d;
   }
 
   Widget _buildGrowYourTrybeSection() {

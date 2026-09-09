@@ -128,6 +128,34 @@ class ApiService {
     return data;
   }
 
+  /// Exchanges a provider ID token for a Fitrybe session.
+  ///
+  /// The server verifies the token against the provider before it issues
+  /// anything, so this call carries no email or name of its own — whatever the
+  /// app claimed would be unsigned, and the token already says it.
+  ///
+  /// [firstName] and [lastName] exist only for Apple, which puts no name in its
+  /// token and volunteers one exactly once. The server uses them to fill a
+  /// blank on a new account and nothing else.
+  static Future<Map<String, dynamic>> socialLogin(
+    String provider,
+    String idToken, {
+    String? firstName,
+    String? lastName,
+  }) async {
+    final res = await _client.post('/auth/social', body: {
+      'provider': provider,
+      'idToken': idToken,
+      'firstName': ?firstName,
+      'lastName': ?lastName,
+    });
+    final data = _ensureOk(res);
+    if (data['accessToken'] != null) {
+      await _client.saveTokens(data['accessToken'], data['refreshToken'] ?? '');
+    }
+    return data;
+  }
+
   static Future<Map<String, dynamic>?> me() async {
     final res = await _client.get('/auth/me');
     if (res.statusCode >= 300) return null;
@@ -195,6 +223,17 @@ class ApiService {
     return _ensureOk(res)['post'] as Map<String, dynamic>?;
   }
 
+  /// One post, with its live counts and the caller's own like state.
+  ///
+  /// A card hands the detail screen whatever it was holding, which may be a
+  /// few minutes old or, from a surface that lists posts differently, missing
+  /// the counts altogether. Returns null if the post is gone or hidden.
+  static Future<Map<String, dynamic>?> getPost(String postId) async {
+    final res = await _client.get('/posts/$postId');
+    if (res.statusCode >= 300) return null;
+    return _decodeMap(res)['post'] as Map<String, dynamic>?;
+  }
+
   static Future<bool> setLiked(String postId, bool liked) async {
     final res = liked
         ? await _client.post('/posts/$postId/like')
@@ -225,11 +264,29 @@ class ApiService {
     return _listOf(res, 'comments');
   }
 
+  /// Adds a comment, or a reply when [parentId] is given.
   static Future<Map<String, dynamic>?> addComment(
-      String postId, String text) async {
-    final res =
-        await _client.post('/posts/$postId/comments', body: {'text': text});
+    String postId,
+    String text, {
+    String? parentId,
+  }) async {
+    final res = await _client.post('/posts/$postId/comments', body: {
+      'text': text,
+      'parentId': ?parentId,
+    });
     return _ensureOk(res)['comment'] as Map<String, dynamic>?;
+  }
+
+  /// Likes or unlikes a comment, returning its new like count.
+  static Future<int?> setCommentLiked(
+    String postId,
+    String commentId,
+    bool liked,
+  ) async {
+    final path = '/posts/$postId/comments/$commentId/like';
+    final res = liked ? await _client.post(path) : await _client.delete(path);
+    if (res.statusCode >= 300) return null;
+    return (_decodeMap(res)['likeCount'] as num?)?.toInt();
   }
 
   // ── 3. ACTIVITIES & ANALYTICS ──────────────────────────────────────────────
@@ -276,6 +333,13 @@ class ApiService {
       Map<String, dynamic> goals) async {
     final res = await _client.put('/goals', body: goals);
     return _ensureOk(res)['goal'] as Map<String, dynamic>?;
+  }
+
+  /// Removes the goal for one period, leaving the others in place.
+  /// [period] is DAILY, WEEKLY or MONTHLY.
+  static Future<bool> deleteGoal(String period) async {
+    final res = await _client.delete('/goals/${period.toUpperCase()}');
+    return res.statusCode < 300;
   }
 
   // ── 5. TRYBES ──────────────────────────────────────────────────────────────

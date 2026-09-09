@@ -12,6 +12,8 @@ import '../widgets/achievement_badge_widget.dart';
 import '../services/health_service.dart';
 import '../services/achievement_service.dart';
 import 'package:share_plus/share_plus.dart';
+import 'post_detail_screen.dart';
+
 
 class ProfileTab extends StatefulWidget {
   final String? userId;
@@ -75,6 +77,35 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
         ? (SessionService().user?['bio'] as String?)?.trim()
         : (_otherUser['bio'] as String?)?.trim();
     return (value == null || value.isEmpty) ? null : value;
+  }
+
+
+
+  /// The activities picked during onboarding, straight from the profile.
+  ///
+  /// These are a stated preference, not a derived one — the athlete chose them,
+  /// so they are shown as chosen rather than inferred from whatever happens to
+  /// be logged most.
+  List<String> get _favouriteActivities {
+    final Object? raw;
+    if (_isOwnProfile) {
+      raw = SessionService().user?['activityInterests'];
+    } else {
+      raw = _otherUser['activityInterests'];
+    }
+    if (raw is! List) return const [];
+    return raw.map((e) => '$e'.trim()).where((e) => e.isNotEmpty).toList();
+  }
+
+  /// Opens the profile editor, refreshing on the way back so a changed
+  /// selection shows immediately.
+  Future<void> _openEditProfile() async {
+    HapticFeedback.lightImpact();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const EditProfileScreen()),
+    );
+    if (mounted) setState(() {});
   }
 
   String get _joinedLabel {
@@ -1034,82 +1065,91 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
       };
 
   Widget _buildFavoritesSection() {
-    // Rank the athlete's own activity types by how often they appear.
-    final counts = <String, int>{};
-    for (final entry
-        in (_analytics['recentActivities'] as List? ?? const []).whereType<Map>()) {
-      final type = '${entry['type'] ?? 'Workout'}';
-      counts[type] = (counts[type] ?? 0) + 1;
-    }
-    final ranked = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final favorites = ranked
-        .take(3)
-        .map((e) => {
-              'label': e.key,
-              'icon': _iconForActivity(e.key),
-              'count': '${e.value} ${e.value == 1 ? 'session' : 'sessions'}',
-            })
-        .toList();
+    // What the athlete said they are into when they signed up, not what they
+    // happen to have logged most. Deriving it from session counts meant a week
+    // of one activity rewrote a stated preference.
+    final favourites = _favouriteActivities;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Favorite Activities',
-          style: GoogleFonts.anybody(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Favorite Activities',
+                style: GoogleFonts.anybody(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            if (_isOwnProfile && favourites.isNotEmpty)
+              GestureDetector(
+                onTap: _openEditProfile,
+                child: Text(
+                  'Edit',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: _accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 12),
-        if (favorites.isEmpty)
+        if (favourites.isEmpty)
           EmptyStateView(
             padding: const EdgeInsets.symmetric(vertical: 16),
             icon: Icons.fitness_center_rounded,
-            title: 'No activities logged',
-            message:
-                'Record a workout and your most-trained activities will show up here.',
+            title: _isOwnProfile
+                ? 'No favourites picked'
+                : 'No favourites shared',
+            message: _isOwnProfile
+                ? 'Choose the activities you are into and they will show up here.'
+                : 'This athlete has not picked any activities yet.',
+            actionLabel: _isOwnProfile ? 'Pick activities' : null,
+            onAction: _isOwnProfile ? _openEditProfile : null,
           )
         else
-        Row(
-          children: favorites.map((fav) {
-            return Expanded(
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: _cardBg.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-                ),
-                child: Column(
-                  children: [
-                    Icon(fav['icon'] as IconData, color: _accent, size: 20),
-                    const SizedBox(height: 6),
-                    Text(
-                      fav['label'] as String,
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.bold,
-                      ),
+          // Wraps rather than sitting in a fixed row of three: someone can pick
+          // as many as they like at sign-up, and the rest should not vanish.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: favourites
+                .map(
+                  (activity) => Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _cardBg.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.05)),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      fav['count'] as String,
-                      style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white38,
-                        fontSize: 9.5,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(_iconForActivity(activity),
+                            color: _accent, size: 16),
+                        const SizedBox(width: 7),
+                        Text(
+                          activity,
+                          style: GoogleFonts.hankenGrotesk(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        ),
+                  ),
+                )
+                .toList(),
+          ),
       ],
     );
   }
@@ -1211,13 +1251,15 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
     final isAuthorMe = _isOwnProfile || post['authorId'] == SessionService().userId;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 20),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+    return GestureDetector(
+      onTap: () => PostDetailScreen.navigate(context, post),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+          ),
         ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1367,7 +1409,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                       final count = _profilePostLikesCount[postId] ?? 0;
                       return _buildPostAction(
                         isLiked ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
-                        '$count Likes',
+                        '$count',
                         () {
                           HapticFeedback.lightImpact();
                           setState(() {
@@ -1385,8 +1427,9 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                     },
                   ),
                   const SizedBox(width: 24),
-                  _buildPostAction(Icons.chat_bubble_outline_rounded, '0', () {
+                  _buildPostAction(Icons.chat_bubble_outline_rounded, '${post['commentCount'] ?? 0}', () {
                     HapticFeedback.lightImpact();
+                    PostDetailScreen.navigate(context, post);
                   }),
                   const SizedBox(width: 24),
                   // Audience info
@@ -1428,7 +1471,8 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   /// Post photos are served by the API, so these are network images.

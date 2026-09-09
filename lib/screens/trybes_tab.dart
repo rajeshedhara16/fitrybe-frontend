@@ -2,10 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:share_plus/share_plus.dart';
+
 import 'chat_detail_screen.dart';
 import 'trybe_detail_screen.dart';
 import 'create_trybe_screen.dart';
 import 'user_profile_screen.dart';
+import 'post_detail_screen.dart';
+
 import '../services/api_service.dart';
 import '../services/session_service.dart';
 import '../widgets/state_views.dart';
@@ -853,24 +857,28 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
     final activity = (post['activity'] is Map)
         ? Map<String, dynamic>.from(post['activity'])
         : null;
-    final counts = (post['_count'] is Map)
-        ? Map<String, dynamic>.from(post['_count'])
-        : <String, dynamic>{};
+    // Trybe posts come back serialized like the main feed, so the counts are
+    // read off the same keys a post carries anywhere else in the app.
+    final likeCount = (post['likeCount'] as num?)?.toInt() ?? 0;
+    final commentCount = (post['commentCount'] as num?)?.toInt() ?? 0;
+    final isLiked = post['likedByMe'] == true;
     final images = (post['imageUrls'] is List)
         ? List<dynamic>.from(post['imageUrls'])
         : const [];
     final heroImage =
         images.isEmpty ? null : ApiService.media('${images.first}');
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _cardBg.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return GestureDetector(
+      onTap: () => PostDetailScreen.navigate(context, post),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _cardBg.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.04)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
@@ -964,29 +972,50 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
           ],
           const SizedBox(height: 12),
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Icon(Icons.favorite_outline_rounded,
-                  color: Colors.white60, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                '${counts['likes'] ?? 0}',
-                style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white60, fontSize: 12),
+              Row(
+                children: [
+                  Icon(
+                    isLiked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_outline_rounded,
+                    color: isLiked ? _accent : Colors.white60,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$likeCount',
+                    style: GoogleFonts.hankenGrotesk(
+                        color: isLiked ? _accent : Colors.white60,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 20),
+                  const Icon(Icons.chat_bubble_outline_rounded,
+                      color: Colors.white60, size: 17),
+                  const SizedBox(width: 6),
+                  Text(
+                    '$commentCount',
+                    style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white60, fontSize: 12.5, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
-              const SizedBox(width: 18),
-              const Icon(Icons.chat_bubble_outline_rounded,
-                  color: Colors.white60, size: 17),
-              const SizedBox(width: 6),
-              Text(
-                '${counts['comments'] ?? 0}',
-                style: GoogleFonts.hankenGrotesk(
-                    color: Colors.white60, fontSize: 12),
+              IconButton(
+                icon: const Icon(Icons.share_outlined, color: Colors.white60, size: 18),
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  final captionText = '${post['caption'] ?? ''}';
+                  SharePlus.instance.share(ShareParams(text: 'Check out this post on FiTrybe! 💪\n\n$captionText'));
+                },
               ),
             ],
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   /// Condenses a timestamp into the "2h ago" style used across the app.

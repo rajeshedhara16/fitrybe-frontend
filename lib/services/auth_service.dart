@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
+import 'google_auth.dart';
 
 class AuthService {
   final ApiClient _client = ApiClient();
@@ -63,12 +64,16 @@ class AuthService {
   /// Revokes this account's refresh tokens server-side, then drops the local
   /// copies. A network failure must not strand the user signed in, so the
   /// local clear happens either way.
+  ///
+  /// The Google session is dropped too. Left in place, the next sign-in would
+  /// silently pick the same account back up with no chance to switch.
   Future<void> logout() async {
     try {
       await _client.post('/auth/logout');
     } catch (e) {
       debugPrint('AuthService Logout error: $e');
     }
+    await GoogleAuth.signOut();
     await _client.clearTokens();
   }
 }

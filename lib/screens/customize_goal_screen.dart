@@ -37,13 +37,34 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
   @override
   void initState() {
     super.initState();
+    // Every activity the recorder can log, named identically. A goal is matched
+    // to sessions by exact activity name, so anything missing here is a goal
+    // that could never be set, and anything named differently is a goal that
+    // could never be met.
     _carouselActivities = [
       {'name': 'Running', 'icon': Icons.directions_run_rounded},
       {'name': 'Cycling', 'icon': Icons.pedal_bike_rounded},
       {'name': 'Walking', 'icon': Icons.directions_walk_rounded},
-      {'name': 'Strength', 'icon': Icons.fitness_center_rounded},
-      {'name': 'Yoga', 'icon': Icons.self_improvement_rounded},
+      {'name': 'Hiking', 'icon': Icons.hiking_rounded},
+      {'name': 'Roller Skating', 'icon': Icons.roller_skating_rounded},
+      {'name': 'Skateboarding', 'icon': Icons.skateboarding_rounded},
       {'name': 'Swimming', 'icon': Icons.pool_rounded},
+      {'name': 'Kayaking', 'icon': Icons.kayaking_rounded},
+      {'name': 'Rowing', 'icon': Icons.rowing_rounded},
+      {'name': 'Skiing', 'icon': Icons.downhill_skiing_rounded},
+      {'name': 'Snowboarding', 'icon': Icons.snowboarding_rounded},
+      {'name': 'Gym Workout', 'icon': Icons.fitness_center_rounded},
+      {'name': 'Football', 'icon': Icons.sports_soccer_rounded},
+      {'name': 'Basketball', 'icon': Icons.sports_basketball_rounded},
+      {'name': 'Tennis', 'icon': Icons.sports_tennis_rounded},
+      {'name': 'Badminton', 'icon': Icons.sports_tennis_rounded},
+      {'name': 'Cricket', 'icon': Icons.sports_cricket_rounded},
+      {'name': 'Boxing', 'icon': Icons.sports_mma_rounded},
+      {'name': 'Yoga', 'icon': Icons.self_improvement_rounded},
+      {'name': 'Martial Arts', 'icon': Icons.sports_martial_arts_rounded},
+      {'name': 'Rock Climbing', 'icon': Icons.landscape_rounded},
+      {'name': 'Golf', 'icon': Icons.sports_golf_rounded},
+      {'name': 'Volleyball', 'icon': Icons.sports_volleyball_rounded},
     ];
     // Default values for [Distance, Duration, Calories, Sessions]
     _metricTargets = [50, 45, 500, 4];
@@ -51,28 +72,272 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
     _loadExistingGoal();
   }
 
-  /// Pre-fills the form with the athlete's saved goal so this screen edits
-  /// rather than always starting from defaults.
+  /// Every goal the athlete holds, keyed by period, so switching the frequency
+  /// tab shows that period's saved goal rather than one shared record.
+  final Map<String, Map<String, dynamic>> _goalsByPeriod = {};
+
   Future<void> _loadExistingGoal() async {
     final payload = await ApiService.getGoals();
-    final goal = payload['goal'];
-    if (goal is! Map || !mounted) return;
+    final goals = payload['goals'];
+    if (goals is! List || !mounted) return;
 
-    final activityIndex = _carouselActivities
-        .indexWhere((a) => a['name'] == '${goal['activity'] ?? ''}');
-    final metricIndex = _metrics.indexOf('${goal['metric'] ?? ''}');
-    final frequencyIndex = _frequencies.indexOf('${goal['frequency'] ?? ''}');
-    final target = (goal['targetValue'] as num?)?.round();
+    _goalsByPeriod.clear();
+    for (final raw in goals) {
+      if (raw is! Map) continue;
+      final goal = Map<String, dynamic>.from(raw);
+      _goalsByPeriod['${goal['period'] ?? ''}'.toUpperCase()] = goal;
+    }
+
+    // Open on whichever period already has a goal, preferring weekly.
+    final firstSet = ['Weekly', 'Daily', 'Monthly']
+        .firstWhere((f) => _goalsByPeriod.containsKey(f.toUpperCase()),
+            orElse: () => '');
+    if (firstSet.isNotEmpty) {
+      _selectedFrequencyIndex = _frequencies.indexOf(firstSet);
+    }
+    _applyGoalForSelectedPeriod();
+  }
+
+  /// Fills the form from the saved goal for the selected frequency, or resets
+  /// to defaults when that period has none.
+  void _applyGoalForSelectedPeriod() {
+    final goal = _goalsByPeriod[
+        _frequencies[_selectedFrequencyIndex].toUpperCase()];
 
     setState(() {
+      if (goal == null) {
+        _selectedActivityIndex = 0;
+        _selectedMetricIndex = 0;
+        _selectedDistanceUnitIndex = 0;
+        _metricTargets = [50, 45, 500, 4];
+        _targetTextCtrl.text = '${_metricTargets[_selectedMetricIndex]}';
+        return;
+      }
+
+      final activityIndex = _carouselActivities
+          .indexWhere((a) => a['name'] == '${goal['activity'] ?? ''}');
+      final metricIndex = _metrics.indexOf('${goal['metric'] ?? ''}');
+      final target = (goal['targetValue'] as num?)?.round();
+      final unitIndex = _distanceUnits.indexWhere(
+        (u) => u.toLowerCase() == '${goal['unit'] ?? ''}'.toLowerCase(),
+      );
+
       if (activityIndex >= 0) _selectedActivityIndex = activityIndex;
       if (metricIndex >= 0) _selectedMetricIndex = metricIndex;
-      if (frequencyIndex >= 0) _selectedFrequencyIndex = frequencyIndex;
+      if (unitIndex >= 0) _selectedDistanceUnitIndex = unitIndex;
       if (target != null && metricIndex >= 0) {
         _metricTargets[metricIndex] = target;
       }
       _targetTextCtrl.text = '${_metricTargets[_selectedMetricIndex]}';
     });
+  }
+
+  /// Which period the form is currently editing.
+  String get _selectedPeriod =>
+      _frequencies[_selectedFrequencyIndex].toUpperCase();
+
+  /// Reads a saved goal back as the line the athlete typed: "50 Km", "4
+  /// Sessions". Stored in whichever unit they chose, so it is shown that way.
+  String _goalSummary(Map<String, dynamic> goal) {
+    final target = (goal['targetValue'] as num?);
+    final unit = '${goal['unit'] ?? ''}';
+    final value = target == null
+        ? '—'
+        : (target % 1 == 0 ? target.toInt().toString() : target.toString());
+    return '$value $unit'.trim();
+  }
+
+  /// The goals already set, one row per period, tappable to edit.
+  Widget _buildCurrentGoals() {
+    final rows = <Widget>[];
+    for (final frequency in _frequencies) {
+      final goal = _goalsByPeriod[frequency.toUpperCase()];
+      if (goal == null) continue;
+      rows.add(_buildCurrentGoalRow(frequency, goal));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'CURRENT GOALS',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white38,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${rows.length} of 3 set',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white24,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          rows[i],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCurrentGoalRow(String frequency, Map<String, dynamic> goal) {
+    final bool isEditing = _selectedPeriod == frequency.toUpperCase();
+
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        setState(() =>
+            _selectedFrequencyIndex = _frequencies.indexOf(frequency));
+        _applyGoalForSelectedPeriod();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: _cardBg.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isEditing
+                ? _accent.withValues(alpha: 0.6)
+                : Colors.white.withValues(alpha: 0.06),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: _accent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                frequency.toUpperCase(),
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${goal['activity'] ?? ''} · ${goal['metric'] ?? ''}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    _goalSummary(goal),
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white54,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isEditing)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(
+                  'EDITING',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: _accent,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline_rounded,
+                  color: Colors.white38, size: 20),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: () => _confirmRemoveGoal(frequency),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemoveGoal(String frequency) async {
+    HapticFeedback.mediumImpact();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: _cardBg,
+        title: Text(
+          'Remove ${frequency.toLowerCase()} goal?',
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Text(
+          'Its streak stops being tracked. Your other goals are unaffected.',
+          style: GoogleFonts.hankenGrotesk(
+              color: Colors.white70, fontSize: 13.5, height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('Keep',
+                style: GoogleFonts.hankenGrotesk(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(
+              'Remove',
+              style: GoogleFonts.hankenGrotesk(
+                  color: Colors.redAccent, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final ok = await ApiService.deleteGoal(frequency);
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            'That goal could not be removed.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _goalsByPeriod.remove(frequency.toUpperCase()));
+    // Editing the period that was just removed should fall back to defaults.
+    if (_selectedPeriod == frequency.toUpperCase()) {
+      _applyGoalForSelectedPeriod();
+    }
   }
 
   @override
@@ -81,11 +346,17 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
     super.dispose();
   }
 
+  /// Distance goals can be set in either unit; the rest have only one.
+  final List<String> _distanceUnits = ['Km', 'Miles'];
+  int _selectedDistanceUnitIndex = 0;
+
+  bool get _isDistanceMetric => _selectedMetricIndex == 0;
+
   // Get metric unit label
   String _getMetricUnit() {
     switch (_selectedMetricIndex) {
       case 0:
-        return 'Miles';
+        return _distanceUnits[_selectedDistanceUnitIndex];
       case 1:
         return 'Minutes';
       case 2:
@@ -187,6 +458,13 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // What is already set, so this screen reads as editing rather than
+            // starting from scratch.
+            if (_goalsByPeriod.isNotEmpty) ...[
+              _buildCurrentGoals(),
+              const SizedBox(height: 26),
+            ],
+
             // Section 1: Activity Selection
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -338,6 +616,56 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                 }),
               ),
             ),
+            // Distance can be set in either unit. The value is stored as typed
+            // alongside the unit, so switching does not silently reinterpret
+            // "50 miles" as "50 km".
+            if (_isDistanceMetric) ...[
+              const SizedBox(height: 14),
+              Row(
+                children: List.generate(_distanceUnits.length, (index) {
+                  final unit = _distanceUnits[index];
+                  final bool isActive = index == _selectedDistanceUnitIndex;
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        setState(() => _selectedDistanceUnitIndex = index);
+                      },
+                      child: Container(
+                        margin: EdgeInsets.only(
+                          right: index == 0 ? 8 : 0,
+                          left: index == 0 ? 0 : 8,
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? _accent.withValues(alpha: 0.18)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isActive
+                                ? _accent
+                                : Colors.white.withValues(alpha: 0.12),
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            unit,
+                            style: GoogleFonts.hankenGrotesk(
+                              color: isActive ? _accent : Colors.white38,
+                              fontSize: 12,
+                              fontWeight: isActive
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
             const SizedBox(height: 24),
 
             // Section 4: Target Input Card
@@ -451,6 +779,11 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                         HapticFeedback.selectionClick();
                         setState(() {
                           _selectedFrequencyIndex = index;
+                        });
+                        // Each period holds its own goal, so switching tab
+                        // loads that one rather than editing a shared record.
+                        _applyGoalForSelectedPeriod();
+                        setState(() {
                         });
                       },
                       child: Container(
@@ -630,7 +963,9 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                 HapticFeedback.lightImpact();
                 final int targetVal = _metricTargets[_selectedMetricIndex];
                 try {
-                  await ApiService.updateGoals({
+                  // Keyed on the period, so saving a weekly goal leaves the
+                  // daily and monthly ones untouched.
+                  final saved = await ApiService.updateGoals({
                     'activity': selectedActivity['name'],
                     'metric': selectedMetric,
                     'targetValue': targetVal,
@@ -638,6 +973,12 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                     'frequency': selectedFrequency,
                     'period': selectedFrequency.toUpperCase(),
                   });
+                  // Refresh the Current Goals list in place, so saving is
+                  // visibly reflected without leaving the screen.
+                  if (saved != null && mounted) {
+                    setState(() => _goalsByPeriod[
+                        selectedFrequency.toUpperCase()] = saved);
+                  }
                 } catch (e) {
                   if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -709,7 +1050,6 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
       {'name': 'Paddleboarding', 'icon': Icons.surfing_rounded, 'type': 'distance'},
       {'name': 'Skiing', 'icon': Icons.downhill_skiing_rounded, 'type': 'distance'},
       {'name': 'Snowboarding', 'icon': Icons.snowboarding_rounded, 'type': 'distance'},
-      {'name': 'Trail Running', 'icon': Icons.terrain_rounded, 'type': 'distance'},
       {'name': 'Nature Walk', 'icon': Icons.park_rounded, 'type': 'distance'},
       {'name': 'Commute Walk', 'icon': Icons.directions_walk_rounded, 'type': 'distance'},
       {'name': 'Commute Ride', 'icon': Icons.pedal_bike_rounded, 'type': 'distance'},

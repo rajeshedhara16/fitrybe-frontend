@@ -7,6 +7,8 @@ import 'package:share_plus/share_plus.dart';
 import 'chat_detail_screen.dart';
 import 'create_post_screen.dart';
 import 'user_profile_screen.dart';
+import 'post_detail_screen.dart';
+
 import '../services/api_service.dart';
 import '../services/session_service.dart';
 import '../widgets/state_views.dart';
@@ -694,20 +696,16 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
     final author = (post['author'] is Map)
         ? Map<String, dynamic>.from(post['author'])
         : <String, dynamic>{};
-    final counts = (post['_count'] is Map)
-        ? Map<String, dynamic>.from(post['_count'])
-        : <String, dynamic>{};
     final images = (post['imageUrls'] is List)
         ? List<dynamic>.from(post['imageUrls'])
         : const [];
 
     final liked = _likedPostIds.contains(postId) || post['likedByMe'] == true;
-    final baseLikes = (counts['likes'] as num?)?.toInt() ??
-        (post['likeCount'] as num?)?.toInt() ??
-        0;
+    final baseLikes = (post['likeCount'] as num?)?.toInt() ?? 0;
     final likes = _likeOverrides[postId] ?? baseLikes;
 
     return _buildFeedCard(
+      post: post,
       postId: postId,
       author: _nameOf(author),
       time: _relativeTime(post['createdAt']),
@@ -716,9 +714,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
       imageUrl: images.isEmpty ? null : ApiService.media('${images.first}'),
       isLiked: liked,
       likesCount: likes,
-      commentCount: (counts['comments'] as num?)?.toInt() ??
-          (post['commentCount'] as num?)?.toInt() ??
-          0,
+      commentCount: (post['commentCount'] as num?)?.toInt() ?? 0,
       onLikeTap: () async {
         HapticFeedback.lightImpact();
         final next = !liked;
@@ -749,6 +745,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
 
 
   Widget _buildFeedCard({
+    Map<String, dynamic>? post,
     required String postId,
     required String author,
     required String time,
@@ -761,13 +758,19 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
     required VoidCallback onLikeTap,
     required VoidCallback onHide,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 18),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+    return GestureDetector(
+      onTap: () {
+        if (post != null) {
+          PostDetailScreen.navigate(context, post);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+          ),
         ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -826,7 +829,7 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          '$likesCount Likes',
+                          '$likesCount',
                           style: GoogleFonts.hankenGrotesk(color: isLiked ? _accent : Colors.white70, fontWeight: FontWeight.bold, fontSize: 12.5),
                         ),
                       ],
@@ -834,7 +837,13 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
                   ),
                   const SizedBox(width: 20),
                   GestureDetector(
-                    onTap: () => _showCommentsSheet(context, postId),
+                    onTap: () {
+                      if (post != null) {
+                        PostDetailScreen.navigate(context, post);
+                      } else {
+                        _showCommentsSheet(context, postId);
+                      }
+                    },
                     child: Row(
                       children: [
                         const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white60, size: 18),
@@ -856,7 +865,8 @@ class _TrybeDetailScreenState extends State<TrybeDetailScreen>
           ),
         ],
       ),
-    );
+    ),
+  );
   }
 
   void _showCommentsSheet(BuildContext context, String postId) {

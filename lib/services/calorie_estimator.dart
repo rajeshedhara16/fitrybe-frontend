@@ -32,7 +32,6 @@ class CalorieEstimator {
   /// since the machine carries the weight.
   static const Map<String, double> _kcalPerKgPerKm = {
     'running': 1.036,
-    'trail running': 1.10,
     'walking': 0.53,
     'hiking': 0.75,
     'cycling': 0.28,

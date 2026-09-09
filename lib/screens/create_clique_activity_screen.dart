@@ -464,7 +464,6 @@ class _CreateCliqueActivityScreenState
       {'name': 'Paddleboarding', 'icon': Icons.surfing_rounded, 'type': 'distance'},
       {'name': 'Skiing', 'icon': Icons.downhill_skiing_rounded, 'type': 'distance'},
       {'name': 'Snowboarding', 'icon': Icons.snowboarding_rounded, 'type': 'distance'},
-      {'name': 'Trail Running', 'icon': Icons.terrain_rounded, 'type': 'distance'},
       {'name': 'Nature Walk', 'icon': Icons.park_rounded, 'type': 'distance'},
       {'name': 'Commute Walk', 'icon': Icons.directions_walk_rounded, 'type': 'distance'},
       {'name': 'Commute Ride', 'icon': Icons.pedal_bike_rounded, 'type': 'distance'},

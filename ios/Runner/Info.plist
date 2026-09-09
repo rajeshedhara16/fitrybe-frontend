@@ -84,5 +84,28 @@
 	<array>
 		<string>location</string>
 	</array>
+	<!-- Google Sign-In. Both values come from the *iOS* OAuth client in the
+	     Google Cloud console and must be replaced before an iOS build will
+	     sign in. Neither is a secret; they ship in every copy of the app.
+
+	     GIDClientID is the client id as shown in the console, ending in
+	     .apps.googleusercontent.com. The URL scheme below is that same id with
+	     its two dot-separated halves swapped, which is the "reversed client
+	     ID" the console shows next to it. Google redirects back into the app
+	     through that scheme, so a wrong value fails only at sign-in time, not
+	     at build time. -->
+	<key>GIDClientID</key>
+	<string>600396189230-q2bc650or5vagmk611fqbtsja1p8ka4u.apps.googleusercontent.com</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.600396189230-q2bc650or5vagmk611fqbtsja1p8ka4u</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

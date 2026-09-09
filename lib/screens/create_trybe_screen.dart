@@ -51,7 +51,6 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
     {'name': 'Paddleboarding', 'icon': Icons.surfing_rounded},
     {'name': 'Skiing', 'icon': Icons.downhill_skiing_rounded},
     {'name': 'Snowboarding', 'icon': Icons.snowboarding_rounded},
-    {'name': 'Trail Running', 'icon': Icons.terrain_rounded},
     {'name': 'Nature Walk', 'icon': Icons.forest_rounded},
     {'name': 'Commute Walk', 'icon': Icons.directions_walk_rounded},
     {'name': 'Commute Ride', 'icon': Icons.directions_bike_rounded},

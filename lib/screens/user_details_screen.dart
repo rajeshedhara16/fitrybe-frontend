@@ -77,7 +77,6 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
       _PrefItem('Paddleboarding', Icons.waves_rounded),
       _PrefItem('Skiing', Icons.downhill_skiing_rounded),
       _PrefItem('Snowboarding', Icons.snowboarding_rounded),
-      _PrefItem('Trail Running', Icons.terrain_rounded),
       _PrefItem('Nature Walk', Icons.nature_people_rounded),
       _PrefItem('Commute Walk', Icons.transfer_within_a_station_rounded),
       _PrefItem('Commute Ride', Icons.directions_bike_rounded),
@@ -750,7 +749,6 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
   static const List<_PrefItem> _gridActivities = [
     _PrefItem('Cycling', Icons.pedal_bike_rounded),
     _PrefItem('Gym & Weightlifting', Icons.fitness_center_rounded),
-    _PrefItem('Trail Running', Icons.terrain_rounded),
     _PrefItem('Swimming', Icons.pool_rounded),
     _PrefItem('Yoga & Mobility', Icons.self_improvement_rounded),
     _PrefItem('Hiking', Icons.hiking_rounded),

@@ -460,18 +460,6 @@ class _CliqueTabState extends State<CliqueTab>
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-      decoration: BoxDecoration(
-        color: _cardBg.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -482,14 +470,6 @@ class _CliqueTabState extends State<CliqueTab>
             decoration: BoxDecoration(
               color: _accent.withValues(alpha: 0.12),
               shape: BoxShape.circle,
-              border: Border.all(color: _accent.withValues(alpha: 0.3), width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: _accent.withValues(alpha: 0.2),
-                  blurRadius: 20,
-                  spreadRadius: 4,
-                ),
-              ],
             ),
             child: Icon(
               Icons.directions_run_rounded,

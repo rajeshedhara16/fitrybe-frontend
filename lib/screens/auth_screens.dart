@@ -5,6 +5,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'home_screen.dart';
 import 'user_details_screen.dart';
 import '../services/api_service.dart';
+import '../services/apple_auth.dart';
+import '../services/google_auth.dart';
 import '../services/session_service.dart';
 
 /// Surfaces backend auth failures (bad credentials, duplicate email,
@@ -41,6 +43,117 @@ void _showAuthError(BuildContext context, Object error) {
   );
 }
 
+/// Sends the athlete to the feed, or back into the profile wizard if they never
+/// finished it. Clears the auth screens behind them either way.
+void _landAfterAuth(BuildContext context, Map<String, dynamic>? user) {
+  final completedOnboarding = user?['onboardingCompleted'] == true;
+  Navigator.pushAndRemoveUntil(
+    context,
+    MaterialPageRoute(
+      builder: (context) =>
+          completedOnboarding ? const HomeScreen() : const UserDetailsScreen(),
+    ),
+    (route) => false,
+  );
+}
+
+/// Signs in with Google, from either the sign-in or the sign-up screen.
+///
+/// There is no separate Google "sign up": the server attaches the identity to
+/// the account that already holds the address, or makes one, so the same call
+/// serves both buttons.
+///
+/// Returns true if the screen should stay in its loading state because a route
+/// change is under way. Backing out of the Google sheet returns false with
+/// nothing shown, since cancelling is not an error.
+Future<bool> _signInWithGoogle(BuildContext context) async {
+  try {
+    final idToken = await GoogleAuth.idToken();
+    if (idToken == null) return false;
+
+    await ApiService.socialLogin('GOOGLE', idToken);
+    final user = await SessionService().load();
+    if (!context.mounted) return false;
+
+    _landAfterAuth(context, user);
+    return true;
+  } catch (e) {
+    if (!context.mounted) return false;
+    _showAuthError(context, e);
+    return false;
+  }
+}
+
+/// Signs in with Apple, from either the sign-in or the sign-up screen.
+///
+/// Apple hands over a name only on the very first authorization for this app,
+/// so it is passed along here. The server treats it as a hint and uses it only
+/// to fill a blank on a brand new account; the identity itself comes out of the
+/// token it verified.
+Future<bool> _signInWithApple(BuildContext context) async {
+  try {
+    final credential = await AppleAuth.authorize();
+    if (credential == null) return false;
+
+    await ApiService.socialLogin(
+      'APPLE',
+      credential.identityToken,
+      firstName: credential.firstName,
+      lastName: credential.lastName,
+    );
+    final user = await SessionService().load();
+    if (!context.mounted) return false;
+
+    _landAfterAuth(context, user);
+    return true;
+  } catch (e) {
+    if (!context.mounted) return false;
+    _showAuthError(context, e);
+    return false;
+  }
+}
+
+/// The Apple button, matching the Google one beside it.
+///
+/// Returns nothing at all off Apple platforms: the Android flow is a browser
+/// redirect that is not wired up, and a button that cannot work is worse than
+/// no button. Apple's own guidelines want its logo and wording left alone, so
+/// the label is fixed rather than themed per screen.
+Widget _appleSignInButton({
+  required bool isLoading,
+  required VoidCallback onPressed,
+}) {
+  if (!AppleAuth.isSupported) return const SizedBox.shrink();
+
+  return Padding(
+    padding: const EdgeInsets.only(top: 12),
+    child: OutlinedButton(
+      onPressed: isLoading ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        shape: const StadiumBorder(),
+        backgroundColor: const Color(0x1AFFFFFF),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.apple, color: Colors.white, size: 22),
+          const SizedBox(width: 10),
+          Text(
+            'Continue with Apple',
+            style: GoogleFonts.hankenGrotesk(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -69,21 +182,26 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _isLoading = false);
 
       // Users who never finished the profile wizard resume it on next sign-in.
-      final completedOnboarding = user?['onboardingCompleted'] == true;
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (context) => completedOnboarding
-              ? const HomeScreen()
-              : const UserDetailsScreen(),
-        ),
-        (route) => false,
-      );
+      _landAfterAuth(context, user);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
       _showAuthError(context, e);
     }
+  }
+
+  Future<void> _handleGoogle() async {
+    setState(() => _isLoading = true);
+    final navigated = await _signInWithGoogle(context);
+    // Leave the spinner up while the route change runs, so the button cannot be
+    // pressed a second time on the way out.
+    if (!navigated && mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _handleApple() async {
+    setState(() => _isLoading = true);
+    final navigated = await _signInWithApple(context);
+    if (!navigated && mounted) setState(() => _isLoading = false);
   }
 
   @override
@@ -339,12 +457,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
                                         // Google Button (Wide Center Outlined Stadium Button)
                                         OutlinedButton(
-                                          onPressed: () {
-                                            Navigator.push(
-                                              context,
-                                              MaterialPageRoute(builder: (context) => const UserDetailsScreen()),
-                                            );
-                                          },
+                                          onPressed:
+                                              _isLoading ? null : _handleGoogle,
                                           style: OutlinedButton.styleFrom(
                                             side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
                                             padding: const EdgeInsets.symmetric(vertical: 15),
@@ -366,6 +480,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                               ),
                                             ],
                                           ),
+                                        ),
+
+                                        // Apple. Required by App Review
+                                        // guideline 4.8 wherever another
+                                        // third-party sign-in is offered.
+                                        _appleSignInButton(
+                                          isLoading: _isLoading,
+                                          onPressed: _handleApple,
                                         ),
                                       ],
                                     ),
@@ -461,6 +583,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => _isLoading = false);
       _showAuthError(context, e);
     }
+  }
+
+  /// Google has no separate sign-up. Someone who already has an account here
+  /// gets signed in to it rather than blocked, which is what they meant.
+  Future<void> _handleGoogle() async {
+    setState(() => _isLoading = true);
+    final navigated = await _signInWithGoogle(context);
+    if (!navigated && mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _handleApple() async {
+    setState(() => _isLoading = true);
+    final navigated = await _signInWithApple(context);
+    if (!navigated && mounted) setState(() => _isLoading = false);
   }
 
   @override
@@ -736,7 +872,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                                         // Google Button (Wide Center Outlined Stadium Button)
                                         OutlinedButton(
-                                          onPressed: () {},
+                                          onPressed:
+                                              _isLoading ? null : _handleGoogle,
                                           style: OutlinedButton.styleFrom(
                                             side: const BorderSide(color: Color(0xFF2E2E32), width: 1.5),
                                             padding: const EdgeInsets.symmetric(vertical: 15),
@@ -758,6 +895,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                               ),
                                             ],
                                           ),
+                                        ),
+
+                                        // Apple. Required by App Review
+                                        // guideline 4.8 wherever another
+                                        // third-party sign-in is offered.
+                                        _appleSignInButton(
+                                          isLoading: _isLoading,
+                                          onPressed: _handleApple,
                                         ),
                                       ],
                                     ),

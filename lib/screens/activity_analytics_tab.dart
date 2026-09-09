@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'subscription_screen.dart';
 import 'customize_goal_screen.dart';
 import '../services/api_service.dart';
+import '../services/goal_progress.dart';
 import '../services/health_service.dart';
 
 class ActivityAnalyticsTab extends StatefulWidget {
@@ -228,217 +229,354 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
 
   void _showDayDetailModal(BuildContext context, int day, int month, int year) {
     HapticFeedback.lightImpact();
-    final String monthName = _months[month - 1];
-    final String dateStr = '$monthName $day, $year';
+
+    final date = DateTime(year, month, day);
     final now = DateTime.now();
-    final bool isToday = (day == now.day && month == now.month && year == now.year);
+    final bool isToday =
+        day == now.day && month == now.month && year == now.year;
+    final bool isFuture = date.isAfter(DateTime(now.year, now.month, now.day));
 
-    final goalMap = _goalsData?['goal'] as Map<String, dynamic>?;
-    final bool hasGoal = goalMap != null;
-    final String goalActivity = goalMap?['activity']?.toString() ?? 'Fitness';
-    final String goalMetric = goalMap?['metric']?.toString() ?? 'Distance';
-    final dynamic targetVal = goalMap?['targetValue'] ?? 0;
-    final String unit = goalMap?['unit']?.toString() ?? '';
-    final String frequency = goalMap?['frequency']?.toString() ?? 'Weekly';
+    final List<dynamic> allActivities =
+        _analyticsData?['recentActivities'] ?? const [];
+    final dayActivities = GoalProgress.activitiesOn(allActivities, date);
 
-    // Find activities logged on this specific date
-    final List<dynamic> allActivities = _analyticsData?['recentActivities'] ?? [];
-    final List<dynamic> dayActivities = allActivities.where((act) {
-      if (act['createdAt'] == null) return false;
-      final dt = DateTime.tryParse(act['createdAt'].toString())?.toLocal();
-      return dt != null && dt.year == year && dt.month == month && dt.day == day;
-    }).toList();
+    // Goals ordered daily, weekly, monthly. Each bar covers the period that
+    // contains this day, named so it is clear what is being measured.
+    final goals = (_goalsData?['goals'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map((g) => Map<String, dynamic>.from(g))
+        .toList()
+      ..sort((a, b) => _periodRank('${a['frequency'] ?? a['period']}')
+          .compareTo(_periodRank('${b['frequency'] ?? b['period']}')));
 
     double totalDistMeters = 0;
     int totalCalories = 0;
+    int totalSeconds = 0;
     for (final act in dayActivities) {
-      totalDistMeters += (act['distance'] as num?)?.toDouble() ?? 0.0;
+      totalDistMeters += (act['distance'] as num?)?.toDouble() ?? 0;
       totalCalories += (act['calories'] as num?)?.toInt() ?? 0;
+      totalSeconds += (act['duration'] as num?)?.toInt() ?? 0;
     }
-
-    final int workoutsCount = dayActivities.length;
-    final String distStr = '${(totalDistMeters / 1000).toStringAsFixed(1)} km';
-
-    final bool isGoalAchieved = hasGoal && dayActivities.isNotEmpty;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: _cardBg,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.35,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (context, scrollController) => Container(
+          decoration: BoxDecoration(
+            color: _cardBg,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          ),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      dateStr.toUpperCase(),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${_months[month - 1]} $day, $year',
                       style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white54,
-                        fontSize: 12,
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  if (isToday)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _accent.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'TODAY',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: _accent,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: EdgeInsets.zero,
+                  children: [
+                    // ── Day totals ───────────────────────────────────────
+                    if (dayActivities.isNotEmpty) ...[
+                      // Expanded so four stats share the width evenly rather
+                      // than overflowing on a narrow phone.
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildDayModalStat(
+                                'SESSIONS', '${dayActivities.length}'),
+                          ),
+                          if (totalDistMeters > 0)
+                            Expanded(
+                              child: _buildDayModalStat('DISTANCE',
+                                  '${(totalDistMeters / 1000).toStringAsFixed(2)} km'),
+                            ),
+                          Expanded(
+                            child: _buildDayModalStat(
+                                'TIME', _shortDuration(totalSeconds)),
+                          ),
+                          if (totalCalories > 0)
+                            Expanded(
+                              child: _buildDayModalStat(
+                                  'KCAL', '$totalCalories'),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 22),
+                    ],
+
+                    // ── Goal completion ──────────────────────────────────
+                    Text(
+                      'GOAL COMPLETION',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white38,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 1.0,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 10),
+                    if (goals.isEmpty)
+                      Text(
+                        'No goals set yet.',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white38,
+                          fontSize: 13,
+                        ),
+                      )
+                    else
+                      for (final goal in goals) ...[
+                        _buildDayGoalBar(goal, allActivities, date),
+                        const SizedBox(height: 14),
+                      ],
+
+                    const SizedBox(height: 8),
+
+                    // ── Activities that day ──────────────────────────────
                     Text(
-                      hasGoal
-                          ? (isToday ? 'Today\'s Goal Summary' : 'Goal Completion Status')
-                          : 'Daily Activity Breakdown',
-                      style: GoogleFonts.anybody(
-                        color: Colors.white,
-                        fontSize: 20,
+                      'ACTIVITIES',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white38,
+                        fontSize: 10.5,
                         fontWeight: FontWeight.bold,
+                        letterSpacing: 1.0,
                       ),
                     ),
-                  ],
-                ),
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: isGoalAchieved ? _accent : const Color(0xFF353438),
-                  child: Icon(
-                    isGoalAchieved
-                        ? Icons.check_circle_rounded
-                        : (hasGoal ? Icons.pie_chart_outline_rounded : Icons.outlined_flag_rounded),
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF131316),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildDayModalStat('WORKOUTS', '$workoutsCount'),
-                  _buildDayModalStat('DISTANCE', distStr),
-                  _buildDayModalStat('CALORIES', '$totalCalories kcal'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (hasGoal)
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: isGoalAchieved ? _accent.withValues(alpha: 0.15) : const Color(0xFF1B1B1E),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: isGoalAchieved ? _accent : Colors.white10,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isGoalAchieved ? Icons.emoji_events_rounded : Icons.bolt_rounded,
-                      color: isGoalAchieved ? _accent : Colors.white54,
-                      size: 22,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isGoalAchieved ? '$goalActivity Goal Active' : '$goalActivity Goal ($frequency)',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                          Text(
-                            'Target: $targetVal $unit ($goalMetric)',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white54,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1B1B1E),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.info_outline_rounded, color: Colors.white38, size: 20),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Set a custom goal (Distance, Duration, Calories, Sessions) to start tracking completion.',
+                    const SizedBox(height: 10),
+                    if (dayActivities.isEmpty)
+                      Text(
+                        isFuture
+                            ? 'Nothing logged yet.'
+                            : isToday
+                                ? 'Nothing logged yet today.'
+                                : 'Rest day — nothing logged.',
                         style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white60,
-                          fontSize: 12,
+                          color: Colors.white38,
+                          fontSize: 13,
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () async {
-                        Navigator.pop(context);
-                        final res = await Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const CustomizeGoalScreen()),
-                        );
-                        if (res == true) {
-                          _fetchBackendAnalytics();
-                        }
-                      },
-                      child: Text(
-                        '+ Set Goal',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: _accent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
+                      )
+                    else
+                      for (final act in dayActivities) ...[
+                        _buildDayActivityRow(act),
+                        const SizedBox(height: 8),
+                      ],
+                    const SizedBox(height: 12),
                   ],
                 ),
               ),
-            const SizedBox(height: 16),
-          ],
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  /// One goal's progress across the period containing the tapped day.
+  Widget _buildDayGoalBar(
+    Map<String, dynamic> goal,
+    List<dynamic> activities,
+    DateTime date,
+  ) {
+    final metric = '${goal['metric'] ?? 'Distance'}';
+    final activity = '${goal['activity'] ?? ''}';
+    final frequency = '${goal['frequency'] ?? goal['period'] ?? 'Weekly'}';
+    final unit = '${goal['unit'] ?? ''}';
+
+    final target = GoalProgress.targetOf(goal) ?? 0;
+    final achieved =
+        GoalProgress.achievedInPeriodContaining(goal, activities, date);
+    final progress = target <= 0 ? 0.0 : (achieved / target).clamp(0.0, 1.0);
+    final bool met = progress >= 1.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$frequency · ${activity.isEmpty ? metric : activity}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.hankenGrotesk(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            if (met)
+              Icon(Icons.check_circle_rounded, color: _accent, size: 15),
+            if (met) const SizedBox(width: 5),
+            Text(
+              '${(progress * 100).round()}%',
+              style: GoogleFonts.anybody(
+                color: met ? _accent : Colors.white70,
+                fontSize: 12.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 5),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: progress,
+            minHeight: 7,
+            backgroundColor: Colors.white.withValues(alpha: 0.08),
+            valueColor: AlwaysStoppedAnimation<Color>(_accent),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          '${_goalValueLabel(metric, achieved, target, unit)}'
+          '  ·  ${GoalProgress.periodLabelFor(goal, date)}',
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white38,
+            fontSize: 11.5,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// One logged session on the tapped day.
+  Widget _buildDayActivityRow(Map<String, dynamic> act) {
+    final type = '${act['type'] ?? act['title'] ?? 'Workout'}';
+    final distanceKm = ((act['distance'] as num?)?.toDouble() ?? 0) / 1000;
+    final seconds = (act['duration'] as num?)?.toInt() ?? 0;
+    final calories = (act['calories'] as num?)?.toInt() ?? 0;
+    final when = DateTime.tryParse('${act['createdAt'] ?? ''}')?.toLocal();
+
+    final parts = <String>[
+      if (distanceKm > 0) '${distanceKm.toStringAsFixed(2)} km',
+      if (seconds > 0) _shortDuration(seconds),
+      if (calories > 0) '$calories kcal',
+    ];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: _accent.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(_metricIcon('Distance'), color: _accent, size: 17),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  type,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (parts.isNotEmpty) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    parts.join('  ·  '),
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white54,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (when != null)
+            Text(
+              _clockTime(when),
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white30,
+                fontSize: 11,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _shortDuration(int seconds) {
+    if (seconds <= 0) return '0m';
+    final hours = seconds ~/ 3600;
+    final mins = (seconds % 3600) ~/ 60;
+    if (hours > 0) return '${hours}h ${mins}m';
+    if (mins > 0) return '${mins}m';
+    return '${seconds}s';
+  }
+
+  static String _clockTime(DateTime when) {
+    final hour12 = when.hour % 12 == 0 ? 12 : when.hour % 12;
+    final minute = when.minute.toString().padLeft(2, '0');
+    return '$hour12:$minute ${when.hour < 12 ? 'am' : 'pm'}';
   }
 
   Widget _buildDayModalStat(String label, String value) {
@@ -453,12 +591,16 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: GoogleFonts.anybody(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: GoogleFonts.anybody(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
       ],
@@ -492,20 +634,15 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
     final int totalGridItems = leadingSpaces + daysInMonth;
 
     final now = DateTime.now();
-    final goalMap = _goalsData?['goal'] as Map<String, dynamic>?;
-    final bool hasGoal = goalMap != null;
+    final bool hasGoal =
+        (_goalsData?['goals'] as List<dynamic>? ?? const []).isNotEmpty;
 
     final List<dynamic> activities = _analyticsData?['recentActivities'] ?? [];
-    final Set<String> activeDates = {};
-    for (final act in activities) {
-      if (act['createdAt'] != null) {
-        final dt = DateTime.tryParse(act['createdAt'].toString())?.toLocal();
-        if (dt != null) {
-          final key = '${dt.year}-${dt.month}-${dt.day}';
-          activeDates.add(key);
-        }
-      }
-    }
+
+    // Days with anything logged. Deliberately independent of goals: a goal has
+    // its own period, and one athlete can hold several with different periods,
+    // so there is no single per-day pass/fail a calendar could show.
+    final Set<DateTime> loggedDays = GoalProgress.activeDays(activities);
 
     return Column(
       children: [
@@ -590,8 +727,9 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
 
                   final int dayNumber = index - leadingSpaces + 1;
                   final bool isToday = (dayNumber == now.day && _selectedMonth == now.month && _selectedYear == now.year);
-                  final String dateKey = '$_selectedYear-$_selectedMonth-$dayNumber';
-                  final bool isActivityLogged = activeDates.contains(dateKey);
+                  final DateTime cellDate =
+                      DateTime(_selectedYear, _selectedMonth, dayNumber);
+                  final bool isActivityLogged = loggedDays.contains(cellDate);
 
                   Color tileBgColor;
                   Color borderColor;
@@ -660,77 +798,33 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                 },
               ),
               const SizedBox(height: 14),
-              // Goal Status Legend / Empty State Prompt
-              if (hasGoal)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildLegendDot(_accent, 'Activity Logged'),
-                    _buildLegendDot(const Color(0xFF353438), 'Rest Day'),
-                    Row(
-                      children: [
-                        Container(
-                          width: 9,
-                          height: 9,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 1.5),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Today',
-                          style: GoogleFonts.hankenGrotesk(
-                            color: Colors.white54,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildLegendDot(_accent, 'Activity Logged'),
+                  _buildLegendDot(const Color(0xFF353438), 'Rest Day'),
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.info_outline_rounded, color: Colors.white38, size: 14),
-                          const SizedBox(width: 6),
-                          Text(
-                            'No fitness goal set yet',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white54,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
+                      Container(
+                        width: 9,
+                        height: 9,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
                       ),
-                      GestureDetector(
-                        onTap: () async {
-                          HapticFeedback.lightImpact();
-                          final res = await Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const CustomizeGoalScreen()),
-                          );
-                          if (res == true) {
-                            _fetchBackendAnalytics();
-                          }
-                        },
-                        child: Text(
-                          '+ Set Goal',
-                          style: GoogleFonts.hankenGrotesk(
-                            color: _accent,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Today',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white54,
+                          fontSize: 10,
                         ),
                       ),
                     ],
                   ),
-                ),
+                ],
+              ),
             ],
           ),
         ),
@@ -738,44 +832,47 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
         // Sidebar Stats Grid Below Calendar (App Backend Data)
         Builder(
           builder: (context) {
-            final List<dynamic> recentActivities = _analyticsData?['recentActivities'] ?? [];
-            final int totalWorkouts = _analyticsData?['summary']?['totalWorkouts'] ?? 0;
-
-            // Count unique active days in selected month from backend activities
-            final Set<int> activeDaysSet = {};
-            for (final act in recentActivities) {
-              if (act['createdAt'] != null) {
-                final dt = DateTime.tryParse(act['createdAt'].toString());
-                if (dt != null && dt.month == _selectedMonth && dt.year == _selectedYear) {
-                  activeDaysSet.add(dt.day);
-                }
-              }
-            }
+            // Days in the selected month that met the goal. `.toLocal()` matters:
+            // a late-night session belongs to the athlete's day, not the
+            // server's.
+            final Set<int> activeDaysSet = loggedDays
+                .where((d) => d.month == _selectedMonth && d.year == _selectedYear)
+                .map((d) => d.day)
+                .toSet();
 
             final int activeDaysCount = activeDaysSet.length;
             final double activePct = daysInMonth > 0 ? (activeDaysCount / daysInMonth) : 0.0;
             final int activePctInt = (activePct * 100).round();
 
-            // Calculate current streak from backend logged workouts
-            int currentStreak = 0;
-            if (totalWorkouts > 0) {
-              int streakCounter = 0;
-              for (int d = now.day; d >= 1; d--) {
-                if (activeDaysSet.contains(d)) {
-                  streakCounter++;
-                  currentStreak = streakCounter;
-                } else if (d < now.day) {
-                  break;
-                }
-              }
-            }
+            // The streak counts consecutive days that met the goal, and runs
+            // across month boundaries — the old version restarted the count at
+            // Counts consecutive days with training, and runs across month
+            // boundaries — the old version restarted at the first of the month.
+            final int currentStreak = GoalProgress.currentStreak(loggedDays);
+            final int longestStreak = GoalProgress.longestStreak(loggedDays);
 
-            final progressMap = _goalsData?['progress'] as Map<String, dynamic>?;
-            final int overallGoalCompletionPct = hasGoal
-                ? ((((progressMap?['distancePercentage'] as num?)?.toInt() ?? 0) +
-                   ((progressMap?['caloriesPercentage'] as num?)?.toInt() ?? 0) +
-                   ((progressMap?['workoutsPercentage'] as num?)?.toInt() ?? 0)) ~/ 3).clamp(0, 100)
-                : 0;
+            // Average progress across the goals the athlete holds, each
+            // measured over its own period. Computed here rather than on the
+            // server, which cannot know the athlete's timezone and so cannot
+            // say which day, week or month a session belongs to.
+            final List<Map<String, dynamic>> goals = (_goalsData?['goals']
+                        as List<dynamic>? ??
+                    const [])
+                .whereType<Map>()
+                .map((g) => Map<String, dynamic>.from(g))
+                .toList();
+
+            var completionSum = 0.0;
+            var counted = 0;
+            for (final goal in goals) {
+              final target = GoalProgress.targetOf(goal);
+              if (target == null || target <= 0) continue;
+              final achieved = GoalProgress.achievedInPeriod(goal, activities);
+              completionSum += (achieved / target).clamp(0.0, 1.0);
+              counted++;
+            }
+            final int overallGoalCompletionPct =
+                counted == 0 ? 0 : ((completionSum / counted) * 100).round();
 
             return Row(
               children: [
@@ -816,6 +913,16 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                             fontSize: 11,
                           ),
                         ),
+                        if (longestStreak > 0) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Best $longestStreak',
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white38,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -941,28 +1048,28 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
   }
 
   Widget _buildPersonalGoalsSection() {
-    final goalMap = _goalsData?['goal'] as Map<String, dynamic>?;
-    final progressMap = _goalsData?['progress'] as Map<String, dynamic>?;
-    final bool hasGoal = goalMap != null;
+    // One goal per period — daily, weekly, monthly — each with its own
+    // activity, metric and target. They are measured and streaked separately
+    // because a day and a week share no common pass/fail.
+    final List<dynamic> rawGoals = _goalsData?['goals'] ?? const [];
+    final goals = rawGoals
+        .whereType<Map>()
+        .map((g) => Map<String, dynamic>.from(g))
+        .toList()
+      ..sort((a, b) => _periodRank('${a['frequency'] ?? a['period']}')
+          .compareTo(_periodRank('${b['frequency'] ?? b['period']}')));
 
-    final double distRatio = hasGoal
-        ? (((progressMap?['distancePercentage'] as num?)?.toDouble() ?? 0.0) / 100.0)
-        : 0.0;
-    final double calRatio = hasGoal
-        ? (((progressMap?['caloriesPercentage'] as num?)?.toDouble() ?? 0.0) / 100.0)
-        : 0.0;
-    final double workRatio = hasGoal
-        ? (((progressMap?['workoutsPercentage'] as num?)?.toDouble() ?? 0.0) / 100.0)
-        : 0.0;
+    final List<dynamic> activities = _analyticsData?['recentActivities'] ?? [];
+    final bool hasGoal = goals.isNotEmpty;
 
-    final String customActivity = goalMap?['activity'] ?? 'Running';
-    final String customMetric = goalMap?['metric'] ?? 'Distance';
-    final dynamic customTarget = goalMap?['targetValue'] ?? goalMap?['targetDistance'] ?? 25;
-    final String customUnit = goalMap?['unit'] ?? 'Miles';
-
-    final targetDist = goalMap?['targetDistance'] ?? 25.0;
-    final targetCal = goalMap?['targetCalories'] ?? 500;
-    final targetWork = goalMap?['targetWorkouts'] ?? 4;
+    Future<void> openPicker() async {
+      HapticFeedback.mediumImpact();
+      final res = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const CustomizeGoalScreen()),
+      );
+      if (res == true) _fetchBackendAnalytics();
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -978,134 +1085,59 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            if (hasGoal)
-              GestureDetector(
-                onTap: () async {
-                  HapticFeedback.mediumImpact();
-                  final res = await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const CustomizeGoalScreen()),
-                  );
-                  if (res == true) {
-                    _fetchBackendAnalytics();
-                  }
-                },
-                child: Text(
-                  'Customize Goal >',
-                  style: GoogleFonts.hankenGrotesk(
-                    color: _accent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
+            GestureDetector(
+              onTap: openPicker,
+              child: Text(
+                hasGoal ? 'Customize Goal >' : 'Set a Goal >',
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
+            ),
           ],
         ),
         const SizedBox(height: 12),
         if (!hasGoal)
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: _cardBg.withValues(alpha: 0.7),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: _accent.withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: _accent.withValues(alpha: 0.15),
-                  child: Icon(Icons.track_changes_rounded, color: _accent, size: 24),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'No Active Goal',
-                        style: GoogleFonts.anybody(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
+          GestureDetector(
+            onTap: openPicker,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _cardBg.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: _accent.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.flag_rounded, color: _accent, size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Set a daily, weekly or monthly goal to start a streak.',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        height: 1.35,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Set target distance, duration, or calories to track progress.',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      GestureDetector(
-                        onTap: () async {
-                          HapticFeedback.lightImpact();
-                          final res = await Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const CustomizeGoalScreen()),
-                          );
-                          if (res == true) {
-                            _fetchBackendAnalytics();
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _accent,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            '+ Set Custom Goal',
-                            style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                  const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+                ],
+              ),
             ),
           )
         else
-          SizedBox(
-            height: 100,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: Row(
               children: [
-                _buildGoalCard(
-                  Icons.flag_rounded,
-                  '$customActivity ($customMetric)',
-                  'Target: $customTarget $customUnit',
-                  distRatio.clamp(0.0, 1.0),
-                ),
-                const SizedBox(width: 12),
-                _buildGoalCard(
-                  Icons.directions_run_rounded,
-                  'Weekly Distance',
-                  '${(progressMap?['distanceKm'] ?? 0)} / $targetDist km',
-                  distRatio.clamp(0.0, 1.0),
-                ),
-                const SizedBox(width: 12),
-                _buildGoalCard(
-                  Icons.local_fire_department_rounded,
-                  'Active Calories',
-                  '${(progressMap?['calories'] ?? 0)} / $targetCal kcal',
-                  calRatio.clamp(0.0, 1.0),
-                ),
-                const SizedBox(width: 12),
-                _buildGoalCard(
-                  Icons.fitness_center_rounded,
-                  'Weekly Workouts',
-                  '${(progressMap?['workouts'] ?? 0)} / $targetWork Sessions',
-                  workRatio.clamp(0.0, 1.0),
-                ),
+                for (var i = 0; i < goals.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 12),
+                  _buildGoalCard(goals[i], activities),
+                ],
               ],
             ),
           ),
@@ -1113,13 +1145,61 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
     );
   }
 
-  Widget _buildGoalCard(
-    IconData icon,
-    String title,
-    String progressText,
-    double progress,
-  ) {
+  /// Daily first, then weekly, then monthly — shortest horizon leads.
+  static int _periodRank(String frequency) {
+    switch (frequency.toLowerCase()) {
+      case 'daily':
+        return 0;
+      case 'weekly':
+        return 1;
+      default:
+        return 2;
+    }
+  }
+
+  static IconData _metricIcon(String metric) {
+    switch (metric) {
+      case 'Calories':
+        return Icons.local_fire_department_rounded;
+      case 'Duration':
+        return Icons.timer_rounded;
+      case 'Sessions':
+        return Icons.fitness_center_rounded;
+      default:
+        return Icons.route_rounded;
+    }
+  }
+
+  /// Formats an achieved/target pair in the goal's own unit.
+  static String _goalValueLabel(
+      String metric, double achieved, double target, String unit) {
+    switch (metric) {
+      case 'Sessions':
+        return '${achieved.round()} / ${target.round()} sessions';
+      case 'Calories':
+        return '${achieved.round()} / ${target.round()} kcal';
+      case 'Duration':
+        return '${achieved.round()} / ${target.round()} min';
+      default:
+        final suffix = unit.toLowerCase().contains('mile') ? 'km' : 'km';
+        return '${achieved.toStringAsFixed(1)} / ${target.toStringAsFixed(1)} $suffix';
+    }
+  }
+
+  /// One goal, showing progress through its current period and how many
+  /// consecutive periods have been completed.
+  Widget _buildGoalCard(Map<String, dynamic> goal, List<dynamic> activities) {
+    final metric = '${goal['metric'] ?? 'Distance'}';
+    final activity = '${goal['activity'] ?? ''}';
+    final frequency = '${goal['frequency'] ?? goal['period'] ?? 'Weekly'}';
+    final unit = '${goal['unit'] ?? ''}';
+
+    final target = GoalProgress.targetOf(goal) ?? 0;
+    final achieved = GoalProgress.achievedInPeriod(goal, activities);
+    final progress = target <= 0 ? 0.0 : (achieved / target).clamp(0.0, 1.0);
+    final streak = GoalProgress.periodStreak(goal, activities);
     final bool isCompleted = progress >= 1.0;
+
     return GestureDetector(
       onTap: () async {
         HapticFeedback.lightImpact();
@@ -1127,58 +1207,96 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
           context,
           MaterialPageRoute(builder: (context) => const CustomizeGoalScreen()),
         );
-        if (res == true) {
-          _fetchBackendAnalytics();
-        }
+        if (res == true) _fetchBackendAnalytics();
       },
       child: Container(
-        width: 200,
+        width: 210,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: _cardBg.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: isCompleted
-                ? _accent.withValues(alpha: 0.3)
+                ? _accent.withValues(alpha: 0.5)
                 : Colors.white.withValues(alpha: 0.05),
-            width: 1,
           ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Icon(icon, color: _accent, size: 18),
-                Text(
-                  progressText,
-                  style: GoogleFonts.hankenGrotesk(
-                    color: isCompleted ? _accent : Colors.white54,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
+                Icon(
+                  _metricIcon(metric),
+                  color: isCompleted ? _accent : Colors.white60,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    frequency.toUpperCase(),
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white38,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                    ),
                   ),
                 ),
+                if (isCompleted)
+                  Icon(Icons.check_circle_rounded, color: _accent, size: 16),
               ],
             ),
-            const Spacer(),
+            const SizedBox(height: 10),
             Text(
-              title,
+              activity.isEmpty ? metric : '$activity · $metric',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: GoogleFonts.hankenGrotesk(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: 13.5,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
+            Text(
+              _goalValueLabel(metric, achieved, target, unit),
+              style: GoogleFonts.anybody(
+                color: Colors.white70,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 value: progress,
-                minHeight: 5,
-                backgroundColor: const Color(0xFF353438),
+                minHeight: 6,
+                backgroundColor: Colors.white.withValues(alpha: 0.08),
                 valueColor: AlwaysStoppedAnimation<Color>(_accent),
               ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  Icons.bolt_rounded,
+                  color: streak > 0 ? _accent : Colors.white24,
+                  size: 14,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  streak > 0
+                      ? '${GoalProgress.streakLabel(goal, streak)} in a row'
+                      : 'No streak yet',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: streak > 0 ? Colors.white70 : Colors.white38,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -1787,70 +1905,55 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
   }
 
   Widget _buildPersonalRecordsGrid() {
-    final List<dynamic> activities = _analyticsData?['recentActivities'] ?? [];
+    // All-time bests, held separately per activity type, straight from the
+    // server. Deriving these on the client meant they were computed over a
+    // truncated list — so a genuine record disappeared once it aged out — and
+    // that a yoga session and a run competed for a single "longest" slot.
+    final List<dynamic> records = _analyticsData?['records'] ?? [];
 
-    dynamic longestAct;
-    double maxDistMeters = 0;
-    dynamic maxDistAct;
-    int maxCalories = 0;
-    dynamic maxCalAct;
-    final Map<String, int> typeCounts = {};
-
-    for (final act in activities) {
-      // Longest duration
-      final int dur = (act['duration'] as num?)?.toInt() ?? 0;
-      if (longestAct == null || dur > ((longestAct['duration'] as num?)?.toInt() ?? 0)) {
-        longestAct = act;
+    Map<String, dynamic>? bestBy(
+      String field, {
+      bool lowestWins = false,
+      bool Function(Map<String, dynamic>)? where,
+    }) {
+      Map<String, dynamic>? winner;
+      num? best;
+      for (final raw in records) {
+        if (raw is! Map) continue;
+        final row = Map<String, dynamic>.from(raw);
+        if (where != null && !where(row)) continue;
+        final value = row[field] as num?;
+        if (value == null || value <= 0) continue;
+        if (best == null ||
+            (lowestWins ? value < best : value > best)) {
+          best = value;
+          winner = row;
+        }
       }
-
-      // Max distance
-      final double dist = (act['distance'] as num?)?.toDouble() ?? 0.0;
-      if (dist > maxDistMeters) {
-        maxDistMeters = dist;
-        maxDistAct = act;
-      }
-
-      // Max calories
-      final int cal = (act['calories'] as num?)?.toInt() ?? 0;
-      if (cal > maxCalories) {
-        maxCalories = cal;
-        maxCalAct = act;
-      }
-
-      // Activity frequency
-      final String rawType = act['type']?.toString() ?? 'Workout';
-      typeCounts[rawType] = (typeCounts[rawType] ?? 0) + 1;
+      return winner;
     }
 
-    // Format Longest
-    final int longestSecs = (longestAct?['duration'] as num?)?.toInt() ?? 0;
-    final int lHours = longestSecs ~/ 3600;
-    final int lMins = (longestSecs % 3600) ~/ 60;
-    final String longestStr = longestSecs == 0
-        ? '0m'
-        : (lHours > 0 ? '${lHours}h ${lMins}m' : '${lMins}m');
-    final String longestTitle = longestAct?['title'] ?? longestAct?['type'] ?? 'No Workouts';
+    String formatDuration(int seconds) {
+      if (seconds <= 0) return '—';
+      final hours = seconds ~/ 3600;
+      final mins = (seconds % 3600) ~/ 60;
+      return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+    }
 
-    // Format Distance
-    final String distStr = maxDistMeters > 0
-        ? '${(maxDistMeters / 1000).toStringAsFixed(1)} km'
-        : '0 km';
-    final String distTitle = maxDistAct?['title'] ?? maxDistAct?['type'] ?? 'Top Distance';
+    String formatPace(num? minutesPerKm) {
+      if (minutesPerKm == null || minutesPerKm <= 0) return '—';
+      final mins = minutesPerKm.floor();
+      final secs = ((minutesPerKm - mins) * 60).round();
+      if (secs == 60) return '${mins + 1}:00 /km';
+      return '$mins:${secs.toString().padLeft(2, '0')} /km';
+    }
 
-    // Format Calories
-    final String calStr = maxCalories > 0 ? '$maxCalories kcal' : '0 kcal';
-    final String calTitle = maxCalAct?['title'] ?? maxCalAct?['type'] ?? 'Max Calories';
-
-    // Format Top Activity
-    String topTypeName = 'None';
-    int topTypeCount = 0;
-    typeCounts.forEach((k, v) {
-      if (v > topTypeCount) {
-        topTypeCount = v;
-        topTypeName = k;
-      }
-    });
-    final String topActSub = topTypeCount > 0 ? '$topTypeCount Sessions' : 'Top Activity';
+    final longest = bestBy('longestDurationSecs');
+    final furthest = bestBy('longestDistanceKm');
+    final hardest = bestBy('mostCalories');
+    // Pace only means anything for a type that actually covers ground.
+    final fastest = bestBy('bestPace', lowestWins: true);
+    final mostUsed = bestBy('sessions');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1863,6 +1966,14 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
             fontWeight: FontWeight.bold,
           ),
         ),
+        const SizedBox(height: 4),
+        Text(
+          'All time, best per activity',
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white38,
+            fontSize: 12,
+          ),
+        ),
         const SizedBox(height: 12),
         GridView.count(
           crossAxisCount: 2,
@@ -1872,12 +1983,40 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
           mainAxisSpacing: 12,
           childAspectRatio: 1.6,
           children: [
-            _buildRecordCard('Longest', longestStr, longestTitle),
-            _buildRecordCard('Top Distance', distStr, distTitle),
-            _buildRecordCard('Max Calories', calStr, calTitle),
-            _buildRecordCard('Top Activity', topTypeName, topActSub),
+            _buildRecordCard(
+              'Longest',
+              formatDuration(
+                  (longest?['longestDurationSecs'] as num?)?.toInt() ?? 0),
+              longest == null ? 'No workouts yet' : '${longest['type']}',
+            ),
+            _buildRecordCard(
+              'Furthest',
+              furthest == null
+                  ? '—'
+                  : '${(furthest['longestDistanceKm'] as num).toStringAsFixed(1)} km',
+              furthest == null ? 'No distance logged' : '${furthest['type']}',
+            ),
+            _buildRecordCard(
+              'Best Pace',
+              formatPace(fastest?['bestPace'] as num?),
+              fastest == null ? 'No paced activity' : '${fastest['type']}',
+            ),
+            _buildRecordCard(
+              'Most Calories',
+              hardest == null ? '—' : '${hardest['mostCalories']} kcal',
+              hardest == null ? 'No workouts yet' : '${hardest['type']}',
+            ),
           ],
         ),
+        if (mostUsed != null) ...[
+          const SizedBox(height: 12),
+          _buildRecordCard(
+            'Most Logged',
+            '${mostUsed['type']}',
+            '${mostUsed['sessions']} sessions'
+            '${(mostUsed['totalDistanceKm'] as num? ?? 0) > 0 ? ' · ${(mostUsed['totalDistanceKm'] as num).toStringAsFixed(0)} km total' : ''}',
+          ),
+        ],
       ],
     );
   }
