@@ -932,12 +932,14 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
             const SizedBox(height: 12),
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: Image.network(
-                heroImage,
-                height: 180,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              child: AspectRatio(
+                aspectRatio: 4 / 3,
+                child: Image.network(
+                  heroImage,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
               ),
             ),
           ],

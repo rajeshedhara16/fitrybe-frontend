@@ -227,6 +227,38 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     return '${diff.inDays}d ago';
   }
 
+  void _openFullScreenImage(BuildContext context, String imageUrl) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: Image.network(
+                imageUrl,
+                fit: BoxFit.contain,
+                errorBuilder: (_, _, _) => const Center(
+                  child: Icon(Icons.broken_image_rounded, color: Colors.white24, size: 48),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final Map<String, dynamic> author =
@@ -463,31 +495,38 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                             ),
                           ],
 
-                          // Post Images / Media Grid
+                          // Post Images / Media List (Complete uncropped view)
                           if (imageUrls.isNotEmpty) ...[
                             const SizedBox(height: 14),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: Column(
-                                children: imageUrls.map((img) {
-                                  final String fullUrl = ApiService.media('$img') ?? '';
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 8.0),
-                                    child: Image.network(
-                                      fullUrl,
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      errorBuilder: (_, _, _) => Container(
-                                        height: 200,
+                            Column(
+                              children: imageUrls.map((img) {
+                                final String fullUrl = ApiService.media('$img') ?? '';
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 12.0),
+                                  child: GestureDetector(
+                                    onTap: () => _openFullScreenImage(context, fullUrl),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Container(
                                         color: _cardBg,
-                                        child: const Center(
-                                          child: Icon(Icons.broken_image_rounded, color: Colors.white24, size: 40),
+                                        width: double.infinity,
+                                        child: Image.network(
+                                          fullUrl,
+                                          fit: BoxFit.fitWidth,
+                                          width: double.infinity,
+                                          errorBuilder: (_, _, _) => Container(
+                                            height: 200,
+                                            color: _cardBg,
+                                            child: const Center(
+                                              child: Icon(Icons.broken_image_rounded, color: Colors.white24, size: 40),
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  );
-                                }).toList(),
-                              ),
+                                  ),
+                                );
+                              }).toList(),
                             ),
                           ],
 

@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'subscription_screen.dart';
+import 'about_screen.dart';
+import 'account_security_screen.dart';
+import 'delete_account_screen.dart';
 import 'edit_profile_screen.dart';
 import 'welcome_screen.dart';
-import '../services/api_client.dart';
 import '../services/session_service.dart';
 import '../widgets/user_avatar.dart';
 
@@ -81,7 +83,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: 'Password, email, and connected accounts',
                   onTap: () {
                     HapticFeedback.lightImpact();
-                    _showComingSoon('Account & Security settings coming soon.');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AccountSecurityScreen(),
+                      ),
+                    );
                   },
                 ),
                 _buildSettingsTile(
@@ -144,7 +151,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: 'Version 1.0.0 · Terms & Privacy Policy',
                   onTap: () {
                     HapticFeedback.lightImpact();
-                    _showComingSoon('FiTrybe v1.0.0');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const AboutScreen()),
+                    );
                   },
                   showDivider: false,
                 ),
@@ -154,6 +164,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               // Log Out Button
               _buildLogOutButton(),
+
+              const SizedBox(height: 14),
+
+              // Account deletion has to be reachable from inside the app: App
+              // Review requires it of anything that lets you create an account.
+              _buildDeleteAccountButton(),
 
               const SizedBox(height: 40),
             ],
@@ -426,13 +442,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onTap: () async {
           HapticFeedback.heavyImpact();
           final nav = Navigator.of(context);
-          await ApiClient().clearTokens();
+          // Through the session, not by clearing tokens: this is what revokes
+          // the refresh tokens server-side, closes the socket and drops the
+          // Google session so the next sign-in can pick a different account.
+          await SessionService().logout();
           nav.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const WelcomeScreen()),
             (route) => false,
           );
         },
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      ),
+    );
+  }
+
+  /// Deliberately quieter than Log Out. Nothing here deletes anything; it opens
+  /// a screen that spells out the consequences and asks twice.
+  Widget _buildDeleteAccountButton() {
+    return Center(
+      child: TextButton(
+        onPressed: () {
+          HapticFeedback.lightImpact();
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DeleteAccountScreen()),
+          );
+        },
+        child: Text(
+          'Delete account',
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white38,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            decoration: TextDecoration.underline,
+            decorationColor: Colors.white24,
+          ),
+        ),
       ),
     );
   }

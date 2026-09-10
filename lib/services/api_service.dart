@@ -142,12 +142,50 @@ class ApiService {
     String idToken, {
     String? firstName,
     String? lastName,
+    String? authorizationCode,
   }) async {
     final res = await _client.post('/auth/social', body: {
       'provider': provider,
       'idToken': idToken,
       'firstName': ?firstName,
       'lastName': ?lastName,
+      'authorizationCode': ?authorizationCode,
+    });
+    final data = _ensureOk(res);
+    if (data['accessToken'] != null) {
+      await _client.saveTokens(data['accessToken'], data['refreshToken'] ?? '');
+    }
+    return data;
+  }
+
+  /// Asks for a reset code to be emailed.
+  ///
+  /// Succeeds whether or not the address has an account — the server answers
+  /// identically either way, so that this screen cannot be used to find out who
+  /// is a member. Throws only when something is actually wrong, such as the
+  /// server having no mail configured or the caller asking too often.
+  static Future<String> requestPasswordReset(String email) async {
+    final res = await _client.post('/auth/forgot-password', body: {
+      'email': email,
+    });
+    final data = _ensureOk(res);
+    return (data['message'] as String?) ??
+        'If that email has an account, a reset code is on its way.';
+  }
+
+  /// Spends the emailed code and sets a new password.
+  ///
+  /// On success the caller is signed straight in, having just proved both the
+  /// address and the new password, so the tokens are stored here.
+  static Future<Map<String, dynamic>> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final res = await _client.post('/auth/reset-password', body: {
+      'email': email,
+      'code': code,
+      'newPassword': newPassword,
     });
     final data = _ensureOk(res);
     if (data['accessToken'] != null) {
@@ -160,6 +198,51 @@ class ApiService {
     final res = await _client.get('/auth/me');
     if (res.statusCode >= 300) return null;
     return _decodeMap(res)['user'] as Map<String, dynamic>?;
+  }
+
+  /// Permanently deletes the signed-in account and everything in it.
+  ///
+  /// [password] is required for an account that has one, and must be omitted
+  /// for one reached only through Google or Apple. There is no undo and no
+  /// grace period: posts, activities, messages and memberships all go.
+  static Future<void> deleteAccount({String? password}) async {
+    final res = await _client.delete('/users/me', body: {
+      'password': ?password,
+    });
+    if (res.statusCode >= 300) _ensureOk(res);
+  }
+
+  /// Every way this account can be signed in to, and whether each may be
+  /// removed. The server refuses to remove the last one, and says so here so
+  /// the screen can grey it out rather than offer an action that must fail.
+  static Future<Map<String, dynamic>> getSignInMethods() async {
+    final res = await _client.get('/users/me/identities');
+    if (res.statusCode >= 300) {
+      return const {'identities': [], 'hasPassword': false};
+    }
+    return _decodeMap(res);
+  }
+
+  /// Attaches another provider to the account already signed in.
+  ///
+  /// Not the same as signing in with it: this always attaches to the current
+  /// account, whatever address the provider reports.
+  static Future<void> linkSignInMethod(
+    String provider,
+    String idToken, {
+    String? authorizationCode,
+  }) async {
+    final res = await _client.post('/users/me/identities', body: {
+      'provider': provider,
+      'idToken': idToken,
+      'authorizationCode': ?authorizationCode,
+    });
+    _ensureOk(res);
+  }
+
+  static Future<void> unlinkSignInMethod(String provider) async {
+    final res = await _client.delete('/users/me/identities/$provider');
+    if (res.statusCode >= 300) _ensureOk(res);
   }
 
   static Future<Map<String, dynamic>?> updateProfile(

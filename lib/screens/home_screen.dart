@@ -883,7 +883,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: AspectRatio(
-                          aspectRatio: 4 / 5,
+                          aspectRatio: 4 / 3,
                           child: Stack(
                             children: [
                               Positioned.fill(

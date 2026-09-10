@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'home_screen.dart';
+import 'forgot_password_screen.dart';
 import 'user_details_screen.dart';
 import '../services/api_service.dart';
 import '../services/apple_auth.dart';
@@ -11,7 +12,7 @@ import '../services/session_service.dart';
 
 /// Surfaces backend auth failures (bad credentials, duplicate email,
 /// unreachable server) instead of leaving the button silently idle.
-void _showAuthError(BuildContext context, Object error) {
+void showAuthError(BuildContext context, Object error) {
   debugPrint('AUTH ERROR DETAILS: $error');
   final String message;
   if (error is ApiException) {
@@ -45,7 +46,7 @@ void _showAuthError(BuildContext context, Object error) {
 
 /// Sends the athlete to the feed, or back into the profile wizard if they never
 /// finished it. Clears the auth screens behind them either way.
-void _landAfterAuth(BuildContext context, Map<String, dynamic>? user) {
+void landAfterAuth(BuildContext context, Map<String, dynamic>? user) {
   final completedOnboarding = user?['onboardingCompleted'] == true;
   Navigator.pushAndRemoveUntil(
     context,
@@ -75,11 +76,11 @@ Future<bool> _signInWithGoogle(BuildContext context) async {
     final user = await SessionService().load();
     if (!context.mounted) return false;
 
-    _landAfterAuth(context, user);
+    landAfterAuth(context, user);
     return true;
   } catch (e) {
     if (!context.mounted) return false;
-    _showAuthError(context, e);
+    showAuthError(context, e);
     return false;
   }
 }
@@ -100,15 +101,18 @@ Future<bool> _signInWithApple(BuildContext context) async {
       credential.identityToken,
       firstName: credential.firstName,
       lastName: credential.lastName,
+      // Traded server-side for something revocable, so the account can be
+      // revoked with Apple if it is ever deleted. App Review requires that.
+      authorizationCode: credential.authorizationCode,
     );
     final user = await SessionService().load();
     if (!context.mounted) return false;
 
-    _landAfterAuth(context, user);
+    landAfterAuth(context, user);
     return true;
   } catch (e) {
     if (!context.mounted) return false;
-    _showAuthError(context, e);
+    showAuthError(context, e);
     return false;
   }
 }
@@ -182,11 +186,11 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _isLoading = false);
 
       // Users who never finished the profile wizard resume it on next sign-in.
-      _landAfterAuth(context, user);
+      landAfterAuth(context, user);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      _showAuthError(context, e);
+      showAuthError(context, e);
     }
   }
 
@@ -332,7 +336,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                           controller: _emailController,
                                           keyboardType: TextInputType.emailAddress,
                                           style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                                          decoration: _buildInputDecoration(
+                                          decoration: buildAuthInputDecoration(
                                             hintText: 'Enter your email',
                                             prefixIcon: Icons.mail_rounded,
                                           ),
@@ -362,7 +366,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                           controller: _passwordController,
                                           obscureText: _obscurePassword,
                                           style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                                          decoration: _buildInputDecoration(
+                                          decoration: buildAuthInputDecoration(
                                             hintText: 'Enter your password',
                                             prefixIcon: Icons.lock_rounded,
                                             suffixIcon: IconButton(
@@ -393,7 +397,25 @@ class _LoginScreenState extends State<LoginScreen> {
                                         Align(
                                           alignment: Alignment.centerRight,
                                           child: TextButton(
-                                            onPressed: () {},
+                                            onPressed: _isLoading
+                                                ? null
+                                                : () {
+                                                    // Whatever they already
+                                                    // typed comes along, so the
+                                                    // address is not entered
+                                                    // twice.
+                                                    Navigator.push(
+                                                      context,
+                                                      MaterialPageRoute(
+                                                        builder: (_) =>
+                                                            ForgotPasswordScreen(
+                                                          initialEmail:
+                                                              _emailController
+                                                                  .text,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
                                             style: TextButton.styleFrom(
                                               padding: const EdgeInsets.symmetric(vertical: 4),
                                               minimumSize: Size.zero,
@@ -581,7 +603,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      _showAuthError(context, e);
+      showAuthError(context, e);
     }
   }
 
@@ -728,7 +750,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                           controller: _emailController,
                                           keyboardType: TextInputType.emailAddress,
                                           style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                                          decoration: _buildInputDecoration(
+                                          decoration: buildAuthInputDecoration(
                                             hintText: 'Enter your email',
                                             prefixIcon: Icons.mail_rounded,
                                           ),
@@ -758,7 +780,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                           controller: _passwordController,
                                           obscureText: _obscurePassword,
                                           style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                                          decoration: _buildInputDecoration(
+                                          decoration: buildAuthInputDecoration(
                                             hintText: 'Create a password',
                                             prefixIcon: Icons.lock_rounded,
                                             suffixIcon: IconButton(
@@ -799,7 +821,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                           controller: _confirmPasswordController,
                                           obscureText: _obscureConfirmPassword,
                                           style: GoogleFonts.hankenGrotesk(color: Colors.white),
-                                          decoration: _buildInputDecoration(
+                                          decoration: buildAuthInputDecoration(
                                             hintText: 'Confirm your password',
                                             prefixIcon: Icons.lock_rounded,
                                             suffixIcon: IconButton(
@@ -958,7 +980,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 }
 
-InputDecoration _buildInputDecoration({
+InputDecoration buildAuthInputDecoration({
   String? hintText,
   String? labelText,
   required IconData prefixIcon,

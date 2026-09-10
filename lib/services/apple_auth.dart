@@ -11,12 +11,19 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 class AppleCredential {
   const AppleCredential({
     required this.identityToken,
+    required this.authorizationCode,
     this.firstName,
     this.lastName,
   });
 
   /// The signed token the backend verifies. The only part that proves anything.
   final String identityToken;
+
+  /// Traded by the server for a token it can later revoke. Apple requires an
+  /// app offering Sign in with Apple to revoke the account on deletion, and
+  /// this code is the only route to something revocable. Single-use and expires
+  /// in minutes, so it is sent straight up rather than kept.
+  final String authorizationCode;
 
   /// Cosmetic, and usually null. Only present on a first authorization.
   final String? firstName;
@@ -79,6 +86,7 @@ class AppleAuth {
 
     return AppleCredential(
       identityToken: token,
+      authorizationCode: credential.authorizationCode,
       firstName: _trimToNull(credential.givenName),
       lastName: _trimToNull(credential.familyName),
     );

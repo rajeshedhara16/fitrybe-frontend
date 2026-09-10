@@ -18,24 +18,13 @@ class ApiClient {
   /// Production deployed backend host on Railway
   static const String _productionHost =
       'https://fitrybe-backend-production.up.railway.app';
-  static const String _localHostAndroid = 'http://127.0.0.1:4000';
-  static const String _localHostDefault = 'http://localhost:4000';
-
   /// Override at build time:
   /// `flutter run --dart-define=FITRYBE_API_HOST=production` or `192.168.1.50`
   static const String _hostOverride =
       String.fromEnvironment('FITRYBE_API_HOST', defaultValue: '');
 
-  String? _resolvedOrigin;
-
-  String get _defaultLocalHost =>
-      defaultTargetPlatform == TargetPlatform.android
-          ? _localHostAndroid
-          : _localHostDefault;
-
   /// Host origin (no `/api` suffix) — also used to resolve `/uploads/...` media.
   String get origin {
-    if (_resolvedOrigin != null) return _resolvedOrigin!;
     if (_hostOverride.isNotEmpty) {
       if (_hostOverride == 'production' || _hostOverride == 'prod') {
         return _productionHost;
@@ -122,28 +111,8 @@ class ApiClient {
     String endpoint,
     Future<http.Response> Function(Uri uri) req,
   ) async {
-    final primary = origin;
-    try {
-      return await req(_uriFor(primary, endpoint));
-    } catch (e) {
-      if (!kDebugMode) rethrow;
-
-      final usingDefaultHost = _hostOverride.isEmpty ||
-          _hostOverride == 'production' ||
-          _hostOverride == 'prod';
-      if (!usingDefaultHost) rethrow;
-
-      final fallback =
-          primary == _productionHost ? _defaultLocalHost : _productionHost;
-      try {
-        final res = await req(_uriFor(fallback, endpoint));
-        _resolvedOrigin = fallback;
-        return res;
-      } catch (_) {
-        // Surface the original failure rather than the fallback's.
-        rethrow;
-      }
-    }
+    return await req(_uriFor(origin, endpoint))
+        .timeout(const Duration(seconds: 15));
   }
 
   /// Runs [send], and if the access token has expired, refreshes it once and
@@ -193,8 +162,17 @@ class ApiClient {
             ),
           ));
 
-  Future<http.Response> delete(String endpoint) =>
-      _withRefresh(() => _execute(endpoint, (uri) => http.delete(uri, headers: _headers)));
+  /// A body is optional and usually absent. Account deletion needs one, to
+  /// carry the password that proves the request is really the account holder's.
+  Future<http.Response> delete(String endpoint, {Map<String, dynamic>? body}) =>
+      _withRefresh(() => _execute(
+            endpoint,
+            (uri) => http.delete(
+              uri,
+              headers: _headers,
+              body: body != null ? jsonEncode(body) : null,
+            ),
+          ));
 
   Future<http.Response> multipartPost(
     String endpoint, {
