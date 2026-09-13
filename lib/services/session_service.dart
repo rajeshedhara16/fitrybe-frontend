@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 import 'socket_service.dart';
+import 'units.dart';
 
 /// Holds the signed-in user for the lifetime of the app session.
 ///
@@ -43,6 +44,9 @@ class SessionService {
     }
     final fetched = await AuthService().getCurrentUser();
     userNotifier.value = fetched;
+    // Every screen formats through Units, so it has to know the athlete's
+    // preference before anything draws.
+    Units.adopt(fetched?['unitSystem']);
     if (fetched != null) {
       SocketService().connect();
     }
@@ -53,6 +57,9 @@ class SessionService {
   void update(Map<String, dynamic>? updated) {
     if (updated == null) return;
     userNotifier.value = {...?userNotifier.value, ...updated};
+    if (updated.containsKey('unitSystem')) {
+      Units.adopt(updated['unitSystem']);
+    }
   }
 
   Future<void> logout() async {

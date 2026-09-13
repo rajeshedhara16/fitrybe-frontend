@@ -534,4 +534,39 @@ void main() {
       );
     });
   });
+
+  group('calendar shading by how many activities a day had', () {
+    test('counts every activity on its own local day', () {
+      final counts = GoalProgress.activityCountsByDay([
+        act(on: DateTime(2026, 9, 3, 6)),
+        act(on: DateTime(2026, 9, 3, 12)),
+        act(on: DateTime(2026, 9, 3, 23, 30)),
+        act(on: DateTime(2026, 9, 4, 0, 15)),
+        'not an activity',
+        {'createdAt': 'garbage'},
+      ]);
+      expect(counts[DateTime(2026, 9, 3)], 3);
+      expect(counts[DateTime(2026, 9, 4)], 1);
+      expect(counts.length, 2);
+    });
+
+    test('nothing logged is level 0', () {
+      expect(GoalProgress.activityDensityLevel(0), 0);
+    });
+
+    test('a single activity is the lightest shade', () {
+      expect(GoalProgress.activityDensityLevel(1), 1);
+    });
+
+    test('two to four activities share the middle shade', () {
+      expect(GoalProgress.activityDensityLevel(2), 2);
+      expect(GoalProgress.activityDensityLevel(3), 2);
+      expect(GoalProgress.activityDensityLevel(4), 2);
+    });
+
+    test('five or more is the darkest shade', () {
+      expect(GoalProgress.activityDensityLevel(5), 3);
+      expect(GoalProgress.activityDensityLevel(12), 3);
+    });
+  });
 }

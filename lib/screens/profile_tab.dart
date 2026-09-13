@@ -4,8 +4,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'edit_profile_screen.dart';
 import 'achievements_screen.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 import '../services/session_service.dart';
 import '../widgets/state_views.dart';
+import '../widgets/activity_heatmap.dart';
 import '../widgets/user_avatar.dart';
 import '../models/achievement_model.dart';
 import '../widgets/achievement_badge_widget.dart';
@@ -42,6 +44,12 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
 
   bool get _isOwnProfile =>
       widget.userId == null || widget.userId == SessionService().userId;
+
+  /// Someone else's profile whose owner has hidden their workouts. The server
+  /// already withholds the data; this is about not drawing an empty grid that
+  /// reads as though they never train.
+  bool get _workoutsHidden =>
+      !_isOwnProfile && _otherUser['activitiesVisible'] == false;
 
   String? get _targetUserId =>
       _isOwnProfile ? SessionService().userId : widget.userId;
@@ -165,6 +173,10 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
       } else {
         final results = await Future.wait([
           ApiService.getUserProfile(userId),
+          // Their own figures, filtered by the server to what they let others
+          // see. Without this the grid below fell back to the viewer's own
+          // phone health data and presented it as this person's.
+          ApiService.getAnalytics(userId: userId),
           ApiService.getFeed(authorId: userId, limit: 30),
         ]);
 
@@ -176,7 +188,8 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           _otherUser = user;
           _stats = (profile['stats'] as Map?)?.cast<String, dynamic>() ?? const {};
           _isFollowing = profile['isFollowing'] == true;
-          _myPosts = results[1] as List<Map<String, dynamic>>;
+          _analytics = results[1] as Map<String, dynamic>;
+          _myPosts = results[2] as List<Map<String, dynamic>>;
           _isLoading = false;
         });
       }
@@ -243,16 +256,22 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           const SizedBox(height: 12),
 
           // Bento Grid Layout
-          _buildBentoGrid(),
+          if (_workoutsHidden) _buildWorkoutsHiddenCard() else _buildBentoGrid(),
           const SizedBox(height: 24),
 
-          // Achievements Showcase
-          _buildAchievementsSection(),
-          const SizedBox(height: 24),
+          // Achievements Showcase. Only on your own profile: the badge list is the
+          // signed-in athlete's, so on anyone else's profile it showed your
+          // badges as if they were theirs.
+          if (_isOwnProfile) ...[
+            _buildAchievementsSection(),
+            const SizedBox(height: 24),
+          ],
 
           // Consistency Heatmap
-          _buildConsistencySection(),
-          const SizedBox(height: 24),
+          if (!_workoutsHidden) ...[
+            _buildConsistencySection(),
+            const SizedBox(height: 24),
+          ],
 
           // Favorite Activities
           _buildFavoritesSection(),
@@ -570,14 +589,37 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     return best;
   }
 
+  Widget _buildWorkoutsHiddenCard() {
+    return _buildBentoCard(
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline_rounded, color: _accent, size: 22),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              'This athlete keeps their workouts private.',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBentoGrid() {
     return ValueListenableBuilder<HealthDataSummary>(
       valueListenable: HealthService().healthNotifier,
       builder: (context, health, _) {
         // Prefer workouts recorded in-app; fall back to device health data.
+        // Device health data belongs to whoever holds the phone, so it may only
+        // stand in on your own profile, never on someone else's.
         final totalDistanceKm =
             (_summary['totalDistanceKm'] as num?)?.toDouble() ??
-                health.distanceKm;
+                (_isOwnProfile ? health.distanceKm : 0.0);
         final totalWorkouts = (_summary['totalWorkouts'] as num?)?.toInt() ?? 0;
         final totalHours =
             (_summary['totalDurationHours'] as num?)?.toDouble() ?? 0;
@@ -608,7 +650,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                         ],
                       ),
                       Text(
-                        '${health.steps} Steps Today',
+                        _isOwnProfile ? '${health.steps} Steps Today' : '',
                         style: GoogleFonts.hankenGrotesk(
                           color: _accent,
                           fontSize: 11,
@@ -620,7 +662,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                   const SizedBox(height: 12),
                   RichText(
                     text: TextSpan(
-                      text: '${totalDistanceKm.toStringAsFixed(1)} ',
+                      text: '${Units.fromKm(totalDistanceKm).toStringAsFixed(1)} ',
                       style: GoogleFonts.anybody(
                         color: Colors.white,
                         fontSize: 28,
@@ -628,7 +670,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                       ),
                       children: [
                         TextSpan(
-                          text: 'km',
+                          text: Units.distanceUnit,
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white38,
                             fontSize: 14,
@@ -914,141 +956,16 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   }
 
   Widget _buildConsistencySection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Training Consistency',
-          style: GoogleFonts.anybody(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: _cardBg.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.03)),
-          ),
-          child: Column(
-            children: [
-              SizedBox(
-                height: 100,
-                child: Builder(builder: (context) {
-                  // Intensity per day = minutes trained that day.
-                  final minutesByDay = <DateTime, double>{};
-                  for (final entry
-                      in (_analytics['recentActivities'] as List? ?? const [])
-                          .whereType<Map>()) {
-                    final at =
-                        DateTime.tryParse('${entry['createdAt'] ?? ''}')?.toLocal();
-                    if (at == null) continue;
-                    final day = DateTime(at.year, at.month, at.day);
-                    minutesByDay[day] = (minutesByDay[day] ?? 0) +
-                        ((entry['duration'] as num?) ?? 0) / 60;
-                  }
-
-                  const weeks = 32;
-                  final today = DateTime.now();
-                  final startOfToday =
-                      DateTime(today.year, today.month, today.day);
-                  // Begin on the Monday that starts the earliest visible week.
-                  final firstDay = startOfToday
-                      .subtract(Duration(days: (weeks - 1) * 7 + (today.weekday - 1)));
-
-                  return ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: weeks,
-                    itemBuilder: (context, weekIdx) {
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: List.generate(7, (dayIdx) {
-                            final day =
-                                firstDay.add(Duration(days: weekIdx * 7 + dayIdx));
-                            final minutes = day.isAfter(startOfToday)
-                                ? null
-                                : minutesByDay[day];
-
-                            Color cellColor =
-                                const Color(0xFF353438).withValues(alpha: 0.3);
-                            if (minutes != null && minutes > 0) {
-                              cellColor = switch (minutes) {
-                                < 20 => _accent.withValues(alpha: 0.2),
-                                < 40 => _accent.withValues(alpha: 0.4),
-                                < 70 => _accent.withValues(alpha: 0.7),
-                                _ => _accent,
-                              };
-                            }
-
-                            return Container(
-                              width: 11,
-                              height: 11,
-                              decoration: BoxDecoration(
-                                color: cellColor,
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                            );
-                          }),
-                        ),
-                      );
-                    },
-                  );
-                }),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Less Intense',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white38,
-                      fontSize: 10,
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      _buildHeatmapLegendCell(const Color(0xFF353438).withValues(alpha: 0.3)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent.withValues(alpha: 0.2)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent.withValues(alpha: 0.4)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent.withValues(alpha: 0.7)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent),
-                    ],
-                  ),
-                  Text(
-                    'More Intense',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white38,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHeatmapLegendCell(Color color) {
-    return Container(
-      width: 10,
-      height: 10,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(2),
+    return ActivityHeatmap(
+      activities: (_analytics['recentActivities'] as List?) ?? const [],
+      title: 'Training Consistency',
+      titleStyle: GoogleFonts.anybody(
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: FontWeight.bold,
       ),
+      accent: _accent,
+      cardColor: _cardBg.withValues(alpha: 0.6),
     );
   }
 

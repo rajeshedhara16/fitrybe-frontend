@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
+import 'post_detail_screen.dart';
 import 'user_profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
@@ -31,6 +32,9 @@ class _NotificationItem {
     this.isRead = false,
     this.actionable = false,
     this.entityId,
+    this.actionResolution,
+    this.apiType = '',
+    this.commentId,
   });
 
   final String id;
@@ -44,7 +48,15 @@ class _NotificationItem {
   final bool actionable;
   /// Id of the thing the notification points at (clique session, trybe, post).
   final String? entityId;
-  String? actionResolution; // null, 'accepted', 'declined', 'joined', 'ignored'
+
+  /// The server's own type. The card type folds unknown kinds into kudos for
+  /// display, so routing reads this instead and never mistakes, say, a message
+  /// for a post.
+  final String apiType;
+
+  /// The comment a comment or comment-like notification is about, when known.
+  final String? commentId;
+  String? actionResolution; // null, 'accepted', 'declined', 'joined', 'ignored', 'expired'
 }
 
 class NotificationsTab extends StatefulWidget {
@@ -142,6 +154,16 @@ class _NotificationsTabState extends State<NotificationsTab> {
       actionable: type == _NotifType.trybeInvite ||
           type == _NotifType.cliqueInvite,
       entityId: raw['entityId'] as String?,
+      apiType: '${raw['type'] ?? ''}'.toUpperCase(),
+      commentId: raw['commentId'] as String?,
+      // Answered invites arrive already settled, so their buttons stay gone
+      // after a refresh. Pending ones, or anything without a state, stay open.
+      actionResolution: switch ('${raw['inviteState'] ?? ''}') {
+        'joined' => 'joined',
+        'declined' => 'declined',
+        'expired' => 'expired',
+        _ => null,
+      },
     );
   }
 
@@ -246,6 +268,65 @@ class _NotificationsTabState extends State<NotificationsTab> {
     });
     _markReadOnServer(item);
     if (sessionId != null) await ApiService.leaveClique(sessionId);
+  }
+
+  /// Accepts a Trybe invite by actually joining, and shows it as joined only
+  /// once the server agrees. It used to mark the invite joined without asking
+  /// the server at all, which is why the button came back on refresh.
+  Future<void> _acceptTrybeInvite(_NotificationItem item) async {
+    final trybeId = item.entityId;
+    if (trybeId == null) return;
+    HapticFeedback.mediumImpact();
+
+    try {
+      await ApiService.joinTrybe(trybeId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          content: Text(
+            e is ApiException
+                ? e.message
+                : 'Could not join this Trybe. Check your connection.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    _resolveAction(item, 'joined', 'Joined the Trybe!');
+  }
+
+  /// Ignoring removes the invite, so it stays gone after a refresh. The
+  /// notification is the invitation itself, so this also gives up the right to
+  /// join a private Trybe from it.
+  Future<void> _ignoreTrybeInvite(_NotificationItem item) async {
+    _resolveAction(item, 'ignored', 'Invite ignored');
+    await ApiService.deleteNotification(item.id);
+  }
+
+  /// Opens what the notification is about. Likes and comments land on the
+  /// post, and on the exact comment when the notification recorded one. Other
+  /// kinds keep their old behaviour of simply marking themselves read.
+  Future<void> _open(_NotificationItem item) async {
+    _markRead(item);
+
+    final postId = item.entityId;
+    final isAboutPost = item.apiType == 'LIKE' || item.apiType == 'COMMENT';
+    if (!isAboutPost || postId == null || postId.isEmpty) return;
+
+    HapticFeedback.selectionClick();
+    await PostDetailScreen.openById(
+      context,
+      postId,
+      focusCommentId: item.commentId,
+      // An older comment notification has no comment id, so at least land on
+      // the comments rather than the top of the post.
+      openAtComments: item.apiType == 'COMMENT',
+    );
   }
 
   void _markReadOnServer(_NotificationItem item) {
@@ -465,7 +546,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
   Widget _buildNotificationCard(_NotificationItem item) {
     final bool unread = !item.isRead;
     return GestureDetector(
-      onTap: () => _markRead(item),
+      onTap: () => _open(item),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
@@ -560,7 +641,9 @@ class _NotificationsTabState extends State<NotificationsTab> {
                     ? 'Declined'
                     : resolved == 'joined'
                         ? 'Joined'
-                        : 'Ignored',
+                        : resolved == 'expired'
+                            ? 'No longer available'
+                            : 'Ignored',
             style: GoogleFonts.hankenGrotesk(
               color: positive ? const Color(0xFF81C784) : Colors.white38,
               fontSize: 12,
@@ -585,11 +668,11 @@ class _NotificationsTabState extends State<NotificationsTab> {
                 _acceptCliqueInvite(item);
                 return;
               }
-              _resolveAction(
-                item,
-                isInvite ? 'joined' : 'accepted',
-                isInvite ? 'Joined the Trybe!' : 'Follow request accepted',
-              );
+              if (item.type == _NotifType.trybeInvite) {
+                _acceptTrybeInvite(item);
+                return;
+              }
+              _resolveAction(item, 'accepted', 'Follow request accepted');
             },
             child: Container(
               height: 36,
@@ -617,11 +700,11 @@ class _NotificationsTabState extends State<NotificationsTab> {
                 _declineCliqueInvite(item);
                 return;
               }
-              _resolveAction(
-                item,
-                isInvite ? 'ignored' : 'declined',
-                isInvite ? 'Invite ignored' : 'Follow request declined',
-              );
+              if (item.type == _NotifType.trybeInvite) {
+                _ignoreTrybeInvite(item);
+                return;
+              }
+              _resolveAction(item, 'declined', 'Follow request declined');
             },
             child: Container(
               height: 36,

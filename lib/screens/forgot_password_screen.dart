@@ -9,10 +9,23 @@ import '../services/session_service.dart';
 
 /// Resetting a forgotten password with a code emailed to the account address.
 class ForgotPasswordScreen extends StatefulWidget {
-  const ForgotPasswordScreen({super.key, this.initialEmail});
+  const ForgotPasswordScreen({
+    super.key,
+    this.initialEmail,
+    this.isSettingFirstPassword = false,
+  });
 
   /// Carried over from the sign-in form, so nobody types their address twice.
   final String? initialEmail;
+
+  /// True when reached from Account & Security by someone whose account has no
+  /// password, because they signed up with Google or Apple.
+  ///
+  /// The mechanics are identical, a code to the address on file and then a new
+  /// password, but the words are not. Someone who never had a password has not
+  /// forgotten one, and reassuring them about a problem they do not have reads
+  /// as a wrong turn.
+  final bool isSettingFirstPassword;
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -102,6 +115,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     final onCodeStage = _stage == _Stage.code;
+    final isFirstPassword = widget.isSettingFirstPassword;
     final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
@@ -141,7 +155,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           children: [
                             const SizedBox(height: 4),
                             Text(
-                              onCodeStage ? 'SECURITY CODE' : 'ACCOUNT RECOVERY',
+                              onCodeStage
+                                  ? 'SECURITY CODE'
+                                  : (isFirstPassword
+                                      ? 'ACCOUNT SECURITY'
+                                      : 'ACCOUNT RECOVERY'),
                               style: GoogleFonts.anybody(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
@@ -169,16 +187,29 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                           style: TextStyle(color: _accent),
                                         ),
                                       ]
-                                    : const [
-                                        TextSpan(
-                                          text: 'FORGOT ',
-                                          style: TextStyle(color: Colors.white),
-                                        ),
-                                        TextSpan(
-                                          text: 'PASSWORD?',
-                                          style: TextStyle(color: _accent),
-                                        ),
-                                      ],
+                                    : (isFirstPassword
+                                        ? const [
+                                            TextSpan(
+                                              text: 'SET A ',
+                                              style: TextStyle(
+                                                  color: Colors.white),
+                                            ),
+                                            TextSpan(
+                                              text: 'PASSWORD',
+                                              style: TextStyle(color: _accent),
+                                            ),
+                                          ]
+                                        : const [
+                                            TextSpan(
+                                              text: 'FORGOT ',
+                                              style: TextStyle(
+                                                  color: Colors.white),
+                                            ),
+                                            TextSpan(
+                                              text: 'PASSWORD?',
+                                              style: TextStyle(color: _accent),
+                                            ),
+                                          ]),
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -187,7 +218,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                   ? (_sentMessage.isNotEmpty
                                       ? _sentMessage
                                       : 'We sent a 6-digit verification code to $_email. Enter it below along with your new password.')
-                                  : 'Don\'t worry! Enter your registered email address and we\'ll send you a code to reset your password.',
+                                  : (isFirstPassword
+                                      ? 'You sign in with a connected account, so you don\'t have a password yet. Adding one gives you a second way in. We\'ll email you a code to confirm it\'s you.'
+                                      : 'Don\'t worry! Enter your registered email address and we\'ll send you a code to reset your password.'),
                               style: GoogleFonts.hankenGrotesk(
                                 color: const Color(0xFFA0A0A0),
                                 fontSize: 14.5,
@@ -289,7 +322,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             },
           ),
           const SizedBox(height: 20),
-          _primaryButton('Send Reset Code', _requestCode),
+          _primaryButton(
+            widget.isSettingFirstPassword ? 'Send Code' : 'Send Reset Code',
+            _requestCode,
+          ),
         ],
       ),
     );
@@ -416,7 +452,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           const SizedBox(height: 20),
 
           // Primary Reset Password Button
-          _primaryButton('Reset Password', _submitNewPassword),
+          _primaryButton(
+            widget.isSettingFirstPassword
+                ? 'Set Password'
+                : 'Reset Password',
+            _submitNewPassword,
+          ),
           const SizedBox(height: 10),
 
           // Resend Code Link

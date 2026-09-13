@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/socket_service.dart';
@@ -547,6 +548,9 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         if (_activeDistance > 0.01)
           'avgPace': (_elapsedSeconds / 60) / _activeDistance,
         if (route.isNotEmpty) 'routeData': route,
+        // Marks it as a clique workout, which keeps it out of the solo
+        // recorder's history while it still counts towards stats and goals.
+        'cliqueSessionId': ?widget.sessionId,
       });
 
       await ApiService.createPost(
@@ -602,8 +606,11 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     if (_activeDistance < 0.01) return "--'--\"";
     final double totalMinutes = (_elapsedSeconds / 60.0);
     final double minutesPerKm = totalMinutes / _activeDistance;
-    final int minPart = minutesPerKm.toInt();
-    final int secPart = ((minutesPerKm - minPart) * 60).toInt();
+    // Per mile when that is what the athlete reads in; the tracker still
+    // measures in kilometres.
+    final double perUnit = Units.paceFrom(minutesPerKm);
+    final int minPart = perUnit.toInt();
+    final int secPart = ((perUnit - minPart) * 60).toInt();
     return "$minPart'${secPart.toString().padLeft(2, '0')}\"";
   }
 
@@ -1545,7 +1552,8 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                                   textBaseline: TextBaseline.alphabetic,
                                   children: [
                                     Text(
-                                      _activeDistance.toStringAsFixed(2),
+                                      Units.fromKm(_activeDistance)
+                                          .toStringAsFixed(2),
                                       style: GoogleFonts.anybody(
                                         color: Colors.white,
                                         fontSize: 44,
@@ -1554,7 +1562,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
-                                      'km',
+                                      Units.distanceUnit,
                                       style: GoogleFonts.hankenGrotesk(
                                         color: Colors.white38,
                                         fontSize: 16,
@@ -1602,7 +1610,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                             child: _buildBentoCard(
                               'AVG PACE',
                               _getPaceString(),
-                              '/km',
+                              Units.paceUnit,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -1757,7 +1765,8 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                                   textBaseline: TextBaseline.alphabetic,
                                   children: [
                                     Text(
-                                      _activeDistance.toStringAsFixed(2),
+                                      Units.fromKm(_activeDistance)
+                                          .toStringAsFixed(2),
                                       style: GoogleFonts.anybody(
                                         color: Colors.white,
                                         fontSize: 26,
@@ -1766,7 +1775,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                                     ),
                                     const SizedBox(width: 3),
                                     Text(
-                                      'km',
+                                      Units.distanceUnit,
                                       style: GoogleFonts.hankenGrotesk(
                                         color: Colors.white38,
                                         fontSize: 12,

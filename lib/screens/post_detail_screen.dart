@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 import '../services/session_service.dart';
 import '../widgets/user_avatar.dart';
 import '../widgets/state_views.dart';
@@ -14,13 +15,65 @@ import 'user_profile_screen.dart';
 class PostDetailScreen extends StatefulWidget {
   final Map<String, dynamic> post;
 
-  const PostDetailScreen({super.key, required this.post});
+  /// A comment to scroll to and briefly highlight once comments load, used
+  /// when arriving from a comment or comment-like notification.
+  final String? focusCommentId;
+
+  /// Scroll to the comments when there is no specific comment to find, such as
+  /// an older comment notification that never recorded which one it was.
+  final bool openAtComments;
+
+  const PostDetailScreen({
+    super.key,
+    required this.post,
+    this.focusCommentId,
+    this.openAtComments = false,
+  });
 
   static Future<void> navigate(BuildContext context, Map<String, dynamic> post) async {
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => PostDetailScreen(post: post),
+      ),
+    );
+  }
+
+  /// Opens a post known only by its id, as a notification is.
+  ///
+  /// Fetched first rather than opened blank, because the post may have been
+  /// deleted, or its audience may no longer include the reader, and both should
+  /// say so instead of landing on an empty screen.
+  static Future<void> openById(
+    BuildContext context,
+    String postId, {
+    String? focusCommentId,
+    bool openAtComments = false,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    final post = await ApiService.getPost(postId);
+    if (post == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFF1F1F22),
+          content: Text(
+            'This post is no longer available.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+      return;
+    }
+
+    await navigator.push(
+      MaterialPageRoute(
+        builder: (_) => PostDetailScreen(
+          post: post,
+          focusCommentId: focusCommentId,
+          openAtComments: openAtComments,
+        ),
       ),
     );
   }
@@ -37,6 +90,18 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _commentFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
+
+  /// Where the comments begin, for scrolling there when no single comment is
+  /// the target.
+  final GlobalKey _commentsAnchorKey = GlobalKey();
+  final Map<String, GlobalKey> _commentKeys = {};
+
+  /// The comment currently being pointed out after arriving from a notification.
+  String? _highlightedCommentId;
+
+  /// Reveal once. Comments reload after posting a reply, and that must not
+  /// yank the reader back to the notification's comment.
+  bool _revealedFocusTarget = false;
 
   late Map<String, dynamic> _post;
   /// The comment being replied to, or null when writing a new top-level one.
@@ -105,6 +170,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         _commentCount = _countAll(fetched);
         _isLoadingComments = false;
       });
+      _revealFocusTarget();
     } catch (e) {
       debugPrint('PostDetailScreen _loadComments error: $e');
       if (mounted) setState(() => _isLoadingComments = false);
@@ -185,17 +251,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
-  static String _formatPace(dynamic rawPace) {
-    if (rawPace == null) return '0:00';
-    final str = rawPace.toString().trim();
-    if (str.isEmpty) return '0:00';
-    if (str.contains(':')) return str;
-    final numVal = double.tryParse(str);
-    if (numVal == null || numVal <= 0 || numVal.isInfinite || numVal.isNaN) return '0:00';
-    final mins = numVal.floor();
-    final secs = ((numVal - mins) * 60).round();
-    return '$mins:${secs.toString().padLeft(2, '0')}';
-  }
 
   static double _parseDistKm(dynamic distVal) {
     final num? val = (distVal as num?);
@@ -480,7 +535,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                           ),
                                         ),
                                         Text(
-                                          '${_formatPace(activity['avgPace'])} /km',
+                                          Units.pace(activity['avgPace'] as num?),
                                           style: GoogleFonts.anybody(
                                             fontSize: 16,
                                             color: Colors.white,
@@ -630,6 +685,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         ),
                       ),
                     ),
+
+                    SizedBox(key: _commentsAnchorKey, height: 0),
 
                     // Comments List
                     if (_isLoadingComments)
@@ -909,6 +966,54 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     _commentFocusNode.requestFocus();
   }
 
+  GlobalKey _keyForComment(String id) =>
+      _commentKeys.putIfAbsent(id, () => GlobalKey());
+
+  /// Wraps a comment so it can be scrolled to and flash when it is the target.
+  Widget _focusable(String commentId, Widget child) {
+    final highlighted = commentId == _highlightedCommentId;
+    return AnimatedContainer(
+      key: _keyForComment(commentId),
+      duration: const Duration(milliseconds: 400),
+      decoration: BoxDecoration(
+        color: highlighted ? _accent.withValues(alpha: 0.12) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: child,
+    );
+  }
+
+  /// Scrolls to the comment a notification pointed at, or to the comments when
+  /// that comment is gone or was never recorded, and highlights it briefly.
+  void _revealFocusTarget() {
+    if (_revealedFocusTarget) return;
+    final focusId = widget.focusCommentId;
+    if (focusId == null && !widget.openAtComments) return;
+    _revealedFocusTarget = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final commentContext =
+          focusId == null ? null : _commentKeys[focusId]?.currentContext;
+      final target = commentContext ?? _commentsAnchorKey.currentContext;
+      if (target == null) return;
+
+      Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        alignment: 0.15,
+      );
+
+      if (commentContext != null) {
+        setState(() => _highlightedCommentId = focusId);
+        Future.delayed(const Duration(milliseconds: 2200), () {
+          if (mounted) setState(() => _highlightedCommentId = null);
+        });
+      }
+    });
+  }
+
   /// A top-level comment and the replies hanging off it.
   Widget _buildCommentThread(Map<String, dynamic> comment) {
     final replies = (comment['replies'] as List? ?? const [])
@@ -925,16 +1030,22 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildCommentTile(comment, showBorder: false),
+          _focusable(
+            '${comment['id']}',
+            _buildCommentTile(comment, showBorder: false),
+          ),
           // Replies are indented under their parent without lines between them.
           for (final reply in replies)
             Padding(
               padding: const EdgeInsets.only(left: 40),
-              child: _buildCommentTile(
-                reply,
-                parentId: '${comment['id']}',
-                isReply: true,
-                showBorder: false,
+              child: _focusable(
+                '${reply['id']}',
+                _buildCommentTile(
+                  reply,
+                  parentId: '${comment['id']}',
+                  isReply: true,
+                  showBorder: false,
+                ),
               ),
             ),
           const SizedBox(height: 4),

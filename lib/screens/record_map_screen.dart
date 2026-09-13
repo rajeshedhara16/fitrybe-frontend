@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'subscription_screen.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 import '../services/achievement_service.dart';
 import '../services/calorie_estimator.dart';
 import '../services/health_service.dart';
@@ -142,8 +143,11 @@ class _RecordMapScreenState extends State<RecordMapScreen>
   String _getPace() {
     if (_activeDistance < 0.005) return "-'--\"";
     final double minPerKm = (_elapsedSeconds / 60.0) / _activeDistance;
-    final int min = minPerKm.toInt();
-    final int sec = ((minPerKm - min) * 60).toInt();
+    // Shown per mile when that is what the athlete reads in. The distance
+    // itself is still tracked in kilometres.
+    final double perUnit = Units.paceFrom(minPerKm);
+    final int min = perUnit.toInt();
+    final int sec = ((perUnit - min) * 60).toInt();
     return "$min'${sec.toString().padLeft(2, '0')}\"";
   }
 
@@ -461,7 +465,7 @@ class _RecordMapScreenState extends State<RecordMapScreen>
           Row(
             children: [
               _logChip(Icons.map_outlined,
-                  '${log.distanceKm.toStringAsFixed(2)} KM'),
+                  Units.distanceKm(log.distanceKm).toUpperCase()),
               const SizedBox(width: 10),
               _logChip(Icons.local_fire_department_outlined,
                   '${log.calories} KCAL'),
@@ -944,7 +948,7 @@ class _RecordMapScreenState extends State<RecordMapScreen>
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
-                                      'KM',
+                                      Units.distanceUnit.toUpperCase(),
                                       style: GoogleFonts.hankenGrotesk(
                                         color: Colors.white38,
                                         fontSize: 14,
@@ -992,7 +996,7 @@ class _RecordMapScreenState extends State<RecordMapScreen>
                             child: _buildBentoCard(
                               'AVG PACE',
                               _isRecording ? _getPace() : "-'--\"",
-                              '/km',
+                              Units.paceUnit,
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -1169,7 +1173,7 @@ class _RecordMapScreenState extends State<RecordMapScreen>
                                     ),
                                     const SizedBox(width: 3),
                                     Text(
-                                      'km',
+                                      Units.distanceUnit,
                                       style: GoogleFonts.hankenGrotesk(
                                         color: Colors.white38,
                                         fontSize: 12,

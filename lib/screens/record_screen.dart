@@ -8,6 +8,7 @@ import 'create_post_screen.dart';
 import 'record_map_screen.dart';
 import '../services/health_service.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 import '../services/achievement_service.dart';
 import '../services/calorie_estimator.dart';
 import '../services/location_tracker.dart';
@@ -144,8 +145,11 @@ class _RecordScreenState extends State<RecordScreen>
   String _getPace() {
     if (_activeDistance < 0.005) return "-'--\"";
     final double minPerKm = (_elapsedSeconds / 60.0) / _activeDistance;
-    final int min = minPerKm.toInt();
-    final int sec = ((minPerKm - min) * 60).toInt();
+    // Shown per mile when that is what the athlete reads in. The distance
+    // itself is still tracked in kilometres.
+    final double perUnit = Units.paceFrom(minPerKm);
+    final int min = perUnit.toInt();
+    final int sec = ((perUnit - min) * 60).toInt();
     return "$min'${sec.toString().padLeft(2, '0')}\"";
   }
 
@@ -330,7 +334,10 @@ class _RecordScreenState extends State<RecordScreen>
 
   Future<void> _loadRecentActivities() async {
     // No userId means the caller's own activities, private ones included.
-    final activities = await ApiService.getActivities(limit: 30);
+    // Only workouts recorded here: clique workouts belong to their session and
+    // were cluttering the recorder's history.
+    final activities =
+        await ApiService.getActivities(limit: 30, source: 'RECORDED');
     if (!mounted) return;
     setState(() {
       _activityLogs
@@ -724,7 +731,7 @@ class _RecordScreenState extends State<RecordScreen>
             children: [
               if (log.distanceKm > 0) ...[
                 _logChip(Icons.map_outlined,
-                    '${log.distanceKm.toStringAsFixed(2)} KM'),
+                    Units.distanceKm(log.distanceKm).toUpperCase()),
                 const SizedBox(width: 10),
               ],
               _logChip(Icons.local_fire_department_outlined,
@@ -991,8 +998,10 @@ class _RecordScreenState extends State<RecordScreen>
                             child: _metricCard(
                               label: 'DISTANCE',
                               icon: Icons.map_outlined,
-                              value: _isRecording ? _activeDistance.toStringAsFixed(2) : '0.00',
-                              unit: 'KM',
+                              value: _isRecording
+                                  ? Units.fromKm(_activeDistance).toStringAsFixed(2)
+                                  : '0.00',
+                              unit: Units.distanceUnit.toUpperCase(),
                             ),
                           ),
                         ),
@@ -1002,7 +1011,7 @@ class _RecordScreenState extends State<RecordScreen>
                             label: 'PACE',
                             icon: Icons.speed_rounded,
                             value: _isRecording ? _getPace() : "-'--\"",
-                            unit: '/KM',
+                            unit: Units.paceUnit.toUpperCase(),
                           ),
                         ),
                       ],
@@ -1243,10 +1252,12 @@ class _RecordScreenState extends State<RecordScreen>
               if (finished.distanceKm > 0)
                 Expanded(
                   child: _summaryStat(
-                      'DISTANCE', finished.distanceKm.toStringAsFixed(2), 'KM'),
+                      'DISTANCE',
+                      Units.fromKm(finished.distanceKm).toStringAsFixed(2),
+                      Units.distanceUnit.toUpperCase()),
                 ),
               if (pace != null)
-                Expanded(child: _summaryStat('PACE', pace, '/KM')),
+                Expanded(child: _summaryStat('PACE', pace, Units.paceUnit.toUpperCase())),
               Expanded(
                 child: _summaryStat(
                     'CALORIES', '${finished.calories}', 'KCAL'),

@@ -27,6 +27,7 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
   static const Color _accent = Color(0xFFFF5722);
 
   bool _isLoading = true;
+  bool _loadFailed = false;
   bool _isBusy = false;
   String _email = '';
   bool _hasPassword = false;
@@ -41,7 +42,19 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
   Future<void> _load() async {
     final data = await ApiService.getSignInMethods();
     if (!mounted) return;
+
+    // Say it failed rather than drawing a guess. An empty list would read as
+    // "no password, nothing connected" and offer the wrong buttons.
+    if (data == null) {
+      setState(() {
+        _loadFailed = true;
+        _isLoading = false;
+      });
+      return;
+    }
+
     setState(() {
+      _loadFailed = false;
       _email = '${data['email'] ?? SessionService().user?['email'] ?? ''}';
       _hasPassword = data['hasPassword'] == true;
       _identities = (data['identities'] as List? ?? const [])
@@ -174,7 +187,12 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ForgotPasswordScreen(initialEmail: _email),
+        builder: (_) => ForgotPasswordScreen(
+          initialEmail: _email,
+          // Same mechanics as a reset, different words: nothing has been
+          // forgotten here, a first password is being added.
+          isSettingFirstPassword: true,
+        ),
       ),
     );
     if (mounted) _load();
@@ -203,6 +221,8 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: _accent))
+          : _loadFailed
+          ? _buildLoadError()
           : SafeArea(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
@@ -366,6 +386,44 @@ class _AccountSecurityScreenState extends State<AccountSecurityScreen> {
         ),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    );
+  }
+
+  Widget _buildLoadError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded, color: Colors.white24, size: 40),
+            const SizedBox(height: 14),
+            Text(
+              'Could not load your sign-in methods.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white70,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {
+                setState(() => _isLoading = true);
+                _load();
+              },
+              child: Text(
+                'Try again',
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

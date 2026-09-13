@@ -3,11 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'subscription_screen.dart';
 import 'about_screen.dart';
+import 'privacy_screen.dart';
+import 'units_screen.dart';
 import 'account_security_screen.dart';
 import 'delete_account_screen.dart';
 import 'edit_profile_screen.dart';
 import 'welcome_screen.dart';
 import '../services/session_service.dart';
+import '../services/units.dart';
 import '../widgets/user_avatar.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -97,7 +100,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: 'Control who can see your workout activities',
                   onTap: () {
                     HapticFeedback.lightImpact();
-                    _showComingSoon('Privacy settings coming soon.');
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const PrivacyScreen()),
+                    );
                   },
                   showDivider: false,
                 ),
@@ -121,10 +127,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildSettingsTile(
                   icon: Icons.straighten_rounded,
                   title: 'Units of Measure',
-                  subtitle: 'Kilometers (km), Kilograms (kg)',
-                  onTap: () {
+                  // Reflects the athlete's actual choice rather than asserting
+                  // metric at everyone.
+                  subtitle: Units.isImperial
+                      ? 'Miles (mi), Pounds (lb)'
+                      : 'Kilometres (km), Kilograms (kg)',
+                  onTap: () async {
                     HapticFeedback.lightImpact();
-                    _showComingSoon('Unit preferences coming soon.');
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const UnitsScreen()),
+                    );
+                    if (mounted) setState(() {});
                   },
                   showDivider: false,
                 ),

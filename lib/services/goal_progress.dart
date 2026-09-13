@@ -24,6 +24,31 @@ class GoalProgress {
     return days;
   }
 
+  /// How many activities were logged on each local calendar day.
+  ///
+  /// The calendar shades a day by this count rather than just marking it, so
+  /// a day with one short walk reads differently from a day with five sessions.
+  static Map<DateTime, int> activityCountsByDay(List<dynamic> activities) {
+    final counts = <DateTime, int>{};
+    for (final raw in activities) {
+      if (raw is! Map) continue;
+      final when = DateTime.tryParse('${raw['createdAt'] ?? ''}')?.toLocal();
+      if (when == null) continue;
+      final day = DateTime(when.year, when.month, when.day);
+      counts[day] = (counts[day] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  /// The calendar's shade for a day: 0 for nothing logged, 1 for a single
+  /// activity, 2 for two to four, 3 for five or more.
+  static int activityDensityLevel(int count) {
+    if (count <= 0) return 0;
+    if (count == 1) return 1;
+    if (count <= 4) return 2;
+    return 3;
+  }
+
   /// Consecutive days ending today, or yesterday.
   ///
   /// Today is allowed to be empty without breaking the run — the day is not

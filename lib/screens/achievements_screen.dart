@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/achievement_model.dart';
+import '../services/units.dart';
 import '../widgets/achievement_badge_widget.dart';
 import '../services/achievement_service.dart';
 
@@ -555,20 +556,32 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
     );
   }
 
+  /// A badge's `unit` is also the key the achievement service switches on to
+  /// decide which metric feeds it, so it is never rewritten. Distance badges
+  /// are converted here, at the point of display, and nowhere else.
+  static bool _isDistance(AchievementBadge badge) => badge.unit == 'km';
+
+  static String _shown(AchievementBadge badge, double value) {
+    final shown = _isDistance(badge) ? Units.fromKm(value) : value;
+    return shown.toStringAsFixed(shown == shown.roundToDouble() ? 0 : 1);
+  }
+
+  static String _label(AchievementBadge badge) =>
+      _isDistance(badge) ? Units.distanceUnit : badge.unit;
+
   String _formatProgressText(AchievementBadge badge) {
     if (badge.curTxt != null) return badge.curTxt!;
-    final curStr = badge.cur.toStringAsFixed(badge.cur == badge.cur.roundToDouble() ? 0 : 1);
-    final tgtStr = badge.tgt.toStringAsFixed(badge.tgt == badge.tgt.roundToDouble() ? 0 : 1);
+    final curStr = _shown(badge, badge.cur);
+    final tgtStr = _shown(badge, badge.tgt);
     if (badge.unit.isNotEmpty) {
-      return '$curStr / $tgtStr ${badge.unit}';
+      return '$curStr / $tgtStr ${_label(badge)}';
     }
     return curStr;
   }
 
   String _formatRemainingText(AchievementBadge badge) {
     if (badge.remTxt != null) return badge.remTxt!;
-    final rem = badge.tgt - badge.cur;
-    final remStr = rem.toStringAsFixed(rem == rem.roundToDouble() ? 0 : 1);
-    return '$remStr ${badge.unit} remaining';
+    final remStr = _shown(badge, badge.tgt - badge.cur);
+    return '$remStr ${_label(badge)} remaining';
   }
 }

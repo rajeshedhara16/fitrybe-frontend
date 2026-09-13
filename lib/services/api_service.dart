@@ -215,11 +215,14 @@ class ApiService {
   /// Every way this account can be signed in to, and whether each may be
   /// removed. The server refuses to remove the last one, and says so here so
   /// the screen can grey it out rather than offer an action that must fail.
-  static Future<Map<String, dynamic>> getSignInMethods() async {
+  ///
+  /// Returns null when the list could not be loaded. Deliberately not an empty
+  /// stand-in: "no password and nothing connected" is a real state with its own
+  /// buttons, and faking it on a failed request offers someone with a password
+  /// the option to set a first one.
+  static Future<Map<String, dynamic>?> getSignInMethods() async {
     final res = await _client.get('/users/me/identities');
-    if (res.statusCode >= 300) {
-      return const {'identities': [], 'hasPassword': false};
-    }
+    if (res.statusCode >= 300) return null;
     return _decodeMap(res);
   }
 
@@ -380,21 +383,29 @@ class ApiService {
     return _ensureOk(res)['activity'] as Map<String, dynamic>?;
   }
 
+  /// [source] narrows to where workouts were recorded, 'RECORDED' or
+  /// 'CLIQUE'. Left out, both come back, which is what totals and stats want.
   static Future<List<Map<String, dynamic>>> getActivities({
     String? userId,
     String? type,
+    String? source,
     int limit = 20,
   }) async {
     final res = await _client.get('/activities${_query({
           'userId': userId,
           'type': type,
+          'source': source,
           'limit': limit,
         })}');
     return _listOf(res, 'activities');
   }
 
-  static Future<Map<String, dynamic>> getAnalytics() async {
-    final res = await _client.get('/activities/analytics');
+  /// Your own figures by default, or another athlete's when [userId] is given.
+  /// The server builds someone else's from what they let others see, and
+  /// returns an empty summary if they have hidden their workouts.
+  static Future<Map<String, dynamic>> getAnalytics({String? userId}) async {
+    final res =
+        await _client.get('/activities/analytics${_query({'userId': userId})}');
     if (res.statusCode >= 300) return const {};
     return _decodeMap(res);
   }
@@ -498,6 +509,14 @@ class ApiService {
     final res = await _client
         .post('/trybes/$trybeId/invite', body: {'userId': userId});
     return res.statusCode < 300;
+  }
+
+  /// Joins a Trybe and throws with the server's reason if it refuses, such as a
+  /// private Trybe with no invite. [setTrybeMembership] only reports success,
+  /// which suits a toggle but leaves an invite with nothing to explain.
+  static Future<void> joinTrybe(String trybeId) async {
+    final res = await _client.post('/trybes/$trybeId/join');
+    _ensureOk(res);
   }
 
   static Future<bool> setTrybeMembership(String trybeId, bool join) async {

@@ -44,7 +44,13 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   ];
 
   // ── Audience ───────────────────────────────────────────────────────────────
-  String _selectedAudience = 'Everyone';
+  /// Starts on whatever the athlete set as their default audience, rather than
+  /// always on Everyone. Someone who posts to their Trybes should not have to
+  /// remember to change it every time.
+  String _selectedAudience =
+      SessionService().user?['defaultPostAudience'] == 'TRYBES'
+          ? 'Trybes'
+          : 'Everyone';
   final List<Map<String, dynamic>> _audiences = [
     {'label': 'Everyone', 'icon': Icons.public_rounded},
     {'label': 'Trybes', 'icon': Icons.group_rounded},

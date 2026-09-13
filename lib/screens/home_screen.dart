@@ -22,6 +22,7 @@ import 'settings_screen.dart';
 import '../services/socket_service.dart';
 import '../services/api_service.dart';
 import '../services/goal_progress.dart';
+import '../services/units.dart';
 import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/notification_service.dart';
@@ -835,7 +836,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       // If there's no image but there's a real activity attached, show a clean metrics card.
                       if (activity != null && (activity['distance'] != null || activity['avgPace'] != null)) {
                         final double distKm = _parseDistKm(activity['distance']);
-                        final String paceStr = _formatPace(activity['avgPace']);
                         return Padding(
                           padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
                           child: Container(
@@ -856,7 +856,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Text(activityTitle.toUpperCase(), style: GoogleFonts.hankenGrotesk(fontSize: 9.5, color: _accent, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
                                       const SizedBox(height: 1),
                                       Text('DISTANCE', style: GoogleFonts.hankenGrotesk(fontSize: 8.5, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                                      Text('${distKm.toStringAsFixed(1)} km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+                                      Text(Units.distanceKm(distKm, decimals: 1), style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
                                     ],
                                   ),
                                   const SizedBox(width: 24),
@@ -866,7 +866,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text('PACE', style: GoogleFonts.hankenGrotesk(fontSize: 9, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                                      Text('$paceStr /km', style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+                                      Text(Units.pace(activity['avgPace'] as num?), style: GoogleFonts.anybody(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
                                     ],
                                   ),
                                 ],
@@ -982,7 +982,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                                 ),
                                               ),
                                               Text(
-                                                '${_formatPace(activity['avgPace'])} /km',
+                                                Units.pace(activity['avgPace'] as num?),
                                                 style: GoogleFonts.anybody(
                                                   fontSize: 16,
                                                   color: Colors.white,
@@ -1174,7 +1174,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Expanded(child: _buildStatsCard('Activities', '$workouts', '')),
                     const SizedBox(width: 10),
-                    Expanded(child: _buildStatsCard('Distance', '$distanceKm', ' km')),
+                    Expanded(
+                        child: _buildStatsCard('Distance',
+                            Units.fromKm(distanceKm).toStringAsFixed(2),
+                            ' ${Units.distanceUnit}')),
                     const SizedBox(width: 10),
                     Expanded(child: _buildStatsCard('Calories', '$calories', ' kcal')),
                   ],
@@ -1613,17 +1616,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  static String _formatPace(dynamic rawPace) {
-    if (rawPace == null) return '0:00';
-    final str = rawPace.toString().trim();
-    if (str.isEmpty) return '0:00';
-    if (str.contains(':')) return str;
-    final numVal = double.tryParse(str);
-    if (numVal == null || numVal <= 0 || numVal.isInfinite || numVal.isNaN) return '0:00';
-    final mins = numVal.floor();
-    final secs = ((numVal - mins) * 60).round();
-    return '$mins:${secs.toString().padLeft(2, '0')}';
-  }
 
   static double _parseDistKm(dynamic distVal) {
     final num? val = (distVal as num?);

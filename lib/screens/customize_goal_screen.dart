@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 
 class CustomizeGoalScreen extends StatefulWidget {
   static const routeName = '/CustomizeGoalScreen';
@@ -108,7 +109,6 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
       if (goal == null) {
         _selectedActivityIndex = 0;
         _selectedMetricIndex = 0;
-        _selectedDistanceUnitIndex = 0;
         _metricTargets = [50, 45, 500, 4];
         _targetTextCtrl.text = '${_metricTargets[_selectedMetricIndex]}';
         return;
@@ -117,16 +117,22 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
       final activityIndex = _carouselActivities
           .indexWhere((a) => a['name'] == '${goal['activity'] ?? ''}');
       final metricIndex = _metrics.indexOf('${goal['metric'] ?? ''}');
-      final target = (goal['targetValue'] as num?)?.round();
-      final unitIndex = _distanceUnits.indexWhere(
-        (u) => u.toLowerCase() == '${goal['unit'] ?? ''}'.toLowerCase(),
-      );
+      final rawTarget = (goal['targetValue'] as num?)?.toDouble();
+      final savedInMiles =
+          '${goal['unit'] ?? ''}'.toLowerCase().contains('mile');
+
+      // A goal saved in the other unit is converted, not merely relabelled.
+      // Showing a 50 km target as "50 Miles" would quietly triple it.
+      double? target = rawTarget;
+      if (target != null && metricIndex == 0 && savedInMiles != Units.isImperial) {
+        final km = savedInMiles ? Units.toKmFromMiles(target) : target;
+        target = Units.isImperial ? Units.kmToMiles(km) : km;
+      }
 
       if (activityIndex >= 0) _selectedActivityIndex = activityIndex;
       if (metricIndex >= 0) _selectedMetricIndex = metricIndex;
-      if (unitIndex >= 0) _selectedDistanceUnitIndex = unitIndex;
       if (target != null && metricIndex >= 0) {
-        _metricTargets[metricIndex] = target;
+        _metricTargets[metricIndex] = target.round();
       }
       _targetTextCtrl.text = '${_metricTargets[_selectedMetricIndex]}';
     });
@@ -346,17 +352,19 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
     super.dispose();
   }
 
-  /// Distance goals can be set in either unit; the rest have only one.
-  final List<String> _distanceUnits = ['Km', 'Miles'];
-  int _selectedDistanceUnitIndex = 0;
-
-  bool get _isDistanceMetric => _selectedMetricIndex == 0;
+  /// The unit a distance goal is entered in, taken from the account rather
+  /// than picked again here.
+  ///
+  /// This screen used to carry its own Km/Miles toggle, which meant two places
+  /// decided what a distance meant and they could disagree — a goal reading
+  /// "50 Km" on a screen showing every other distance in miles.
+  String get _distanceUnitLabel => Units.isImperial ? 'Miles' : 'Km';
 
   // Get metric unit label
   String _getMetricUnit() {
     switch (_selectedMetricIndex) {
       case 0:
-        return _distanceUnits[_selectedDistanceUnitIndex];
+        return _distanceUnitLabel;
       case 1:
         return 'Minutes';
       case 2:
@@ -616,56 +624,6 @@ class _CustomizeGoalScreenState extends State<CustomizeGoalScreen> {
                 }),
               ),
             ),
-            // Distance can be set in either unit. The value is stored as typed
-            // alongside the unit, so switching does not silently reinterpret
-            // "50 miles" as "50 km".
-            if (_isDistanceMetric) ...[
-              const SizedBox(height: 14),
-              Row(
-                children: List.generate(_distanceUnits.length, (index) {
-                  final unit = _distanceUnits[index];
-                  final bool isActive = index == _selectedDistanceUnitIndex;
-                  return Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setState(() => _selectedDistanceUnitIndex = index);
-                      },
-                      child: Container(
-                        margin: EdgeInsets.only(
-                          right: index == 0 ? 8 : 0,
-                          left: index == 0 ? 0 : 8,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 9),
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? _accent.withValues(alpha: 0.18)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: isActive
-                                ? _accent
-                                : Colors.white.withValues(alpha: 0.12),
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            unit,
-                            style: GoogleFonts.hankenGrotesk(
-                              color: isActive ? _accent : Colors.white38,
-                              fontSize: 12,
-                              fontWeight: isActive
-                                  ? FontWeight.bold
-                                  : FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
             const SizedBox(height: 24),
 
             // Section 4: Target Input Card

@@ -5,7 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'subscription_screen.dart';
 import 'customize_goal_screen.dart';
 import '../services/api_service.dart';
+import '../widgets/activity_heatmap.dart';
 import '../services/goal_progress.dart';
+import '../services/units.dart';
 import '../services/health_service.dart';
 
 class ActivityAnalyticsTab extends StatefulWidget {
@@ -165,7 +167,9 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
             _buildSummaryCard('Active Workouts', '$backendWorkouts', ''),
             _buildSummaryCard('Active Time', durationStr, ''),
             _buildSummaryCard('Calories', '${health.calories}', ' kcal'),
-            _buildSummaryCard('Distance', '${health.distanceKm}', ' km'),
+            _buildSummaryCard('Distance',
+                Units.fromKm(health.distanceKm).toStringAsFixed(1),
+                ' ${Units.distanceUnit}'),
           ],
         );
       },
@@ -340,7 +344,7 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                           if (totalDistMeters > 0)
                             Expanded(
                               child: _buildDayModalStat('DISTANCE',
-                                  '${(totalDistMeters / 1000).toStringAsFixed(2)} km'),
+                                  Units.distance(totalDistMeters)),
                             ),
                           Expanded(
                             child: _buildDayModalStat(
@@ -501,7 +505,7 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
     final when = DateTime.tryParse('${act['createdAt'] ?? ''}')?.toLocal();
 
     final parts = <String>[
-      if (distanceKm > 0) '${distanceKm.toStringAsFixed(2)} km',
+      if (distanceKm > 0) Units.distanceKm(distanceKm),
       if (seconds > 0) _shortDuration(seconds),
       if (calories > 0) '$calories kcal',
     ];
@@ -607,25 +611,20 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
     );
   }
 
-  Widget _buildLegendDot(Color color, String label) {
-    return Row(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 10),
-        ),
-      ],
-    );
-  }
+  /// The fill for a calendar day at a given density level, from a light tint
+  /// for a single activity to near-solid for five or more.
+  Color _calendarShade(int density) => switch (density) {
+        1 => _accent.withValues(alpha: 0.22),
+        2 => _accent.withValues(alpha: 0.5),
+        3 => _accent.withValues(alpha: 0.88),
+        _ => const Color(0xFF353438).withValues(alpha: 0.3),
+      };
+
+  double _calendarBorderAlpha(int density) => switch (density) {
+        1 => 0.35,
+        2 => 0.6,
+        _ => 1.0,
+      };
 
   Widget _buildCalendarSection() {
     final int daysInMonth = DateTime(_selectedYear, _selectedMonth + 1, 0).day;
@@ -643,6 +642,10 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
     // its own period, and one athlete can hold several with different periods,
     // so there is no single per-day pass/fail a calendar could show.
     final Set<DateTime> loggedDays = GoalProgress.activeDays(activities);
+
+    // How many activities each day had, which sets how strongly it is shaded.
+    final Map<DateTime, int> countsByDay =
+        GoalProgress.activityCountsByDay(activities);
 
     return Column(
       children: [
@@ -729,13 +732,18 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                   final bool isToday = (dayNumber == now.day && _selectedMonth == now.month && _selectedYear == now.year);
                   final DateTime cellDate =
                       DateTime(_selectedYear, _selectedMonth, dayNumber);
-                  final bool isActivityLogged = loggedDays.contains(cellDate);
+                  final int activityCount = countsByDay[cellDate] ?? 0;
+                  final bool isActivityLogged = activityCount > 0;
+                  // One activity is a light tint, two to four darker, five or
+                  // more darkest, so a busy day stands out from a single walk.
+                  final int density =
+                      GoalProgress.activityDensityLevel(activityCount);
 
                   Color tileBgColor;
                   Color borderColor;
                   if (isActivityLogged) {
-                    tileBgColor = _accent;
-                    borderColor = _accent;
+                    tileBgColor = _calendarShade(density);
+                    borderColor = _accent.withValues(alpha: _calendarBorderAlpha(density));
                   } else {
                     tileBgColor = const Color(0xFF353438).withValues(alpha: 0.3);
                     borderColor = Colors.transparent;
@@ -760,11 +768,14 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                           color: borderColor,
                           width: isToday ? 2.0 : 1.0,
                         ),
+                        // The glow deepens with the shade, so a busier day
+                        // reads as brighter rather than merely a darker fill.
                         boxShadow: isActivityLogged
                             ? [
                                 BoxShadow(
-                                  color: _accent.withValues(alpha: 0.3),
-                                  blurRadius: 6,
+                                  color: _accent.withValues(
+                                      alpha: 0.12 + 0.12 * density),
+                                  blurRadius: 3.0 + 3.0 * density,
                                   offset: const Offset(0, 2),
                                 ),
                               ]
@@ -796,34 +807,6 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
                     ),
                   );
                 },
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildLegendDot(_accent, 'Activity Logged'),
-                  _buildLegendDot(const Color(0xFF353438), 'Rest Day'),
-                  Row(
-                    children: [
-                      Container(
-                        width: 9,
-                        height: 9,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Today',
-                        style: GoogleFonts.hankenGrotesk(
-                          color: Colors.white54,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ),
             ],
           ),
@@ -1181,8 +1164,11 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
       case 'Duration':
         return '${achieved.round()} / ${target.round()} min';
       default:
-        final suffix = unit.toLowerCase().contains('mile') ? 'km' : 'km';
-        return '${achieved.toStringAsFixed(1)} / ${target.toStringAsFixed(1)} $suffix';
+        // Both figures are kilometres by the time they reach here — the
+        // goal's own unit was already folded in when its target was read — so
+        // the only conversion left is to whatever the athlete reads in.
+        return '${Units.fromKm(achieved).toStringAsFixed(1)} / '
+            '${Units.fromKm(target).toStringAsFixed(1)} ${Units.distanceUnit}';
     }
   }
 
@@ -1397,9 +1383,7 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
               totalSecs += (a['duration'] as num?)?.toInt() ?? 0;
             }
 
-            final String distStr = totalMeters > 0
-                ? '${(totalMeters / 1000).toStringAsFixed(1)} km'
-                : '0 km';
+            final String distStr = Units.distance(totalMeters, decimals: 1);
 
             final int hours = totalSecs ~/ 3600;
             final int mins = (totalSecs % 3600) ~/ 60;
@@ -1759,148 +1743,16 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
   }
 
   Widget _buildIntensityHeatmap() {
-    final List<dynamic> activities = _analyticsData?['recentActivities'] ?? [];
-    final now = DateTime.now();
-
-    // Build intensity map "YYYY-MM-DD" -> intensity level (1 to 4)
-    final Map<String, int> dateIntensityMap = {};
-    for (final act in activities) {
-      if (act['createdAt'] != null) {
-        final dt = DateTime.tryParse(act['createdAt'].toString())?.toLocal();
-        if (dt != null) {
-          final key = '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-          final int durationSecs = (act['duration'] as num?)?.toInt() ?? 0;
-          int lvl = 1;
-          if (durationSecs > 3600) {
-            lvl = 4;
-          } else if (durationSecs > 1800) {
-            lvl = 3;
-          } else if (durationSecs > 600) {
-            lvl = 2;
-          }
-          dateIntensityMap[key] = (dateIntensityMap[key] ?? 0) > lvl ? dateIntensityMap[key]! : lvl;
-        }
-      }
-    }
-
-    final int todayWeekday = now.weekday; // 1 = Mon, 7 = Sun
-    final DateTime startDate = now.subtract(Duration(days: 15 * 7 + (todayWeekday - 1)));
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Activity Intensity Heatmap',
-          style: GoogleFonts.hankenGrotesk(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: _cardBg.withValues(alpha: 0.7),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-          ),
-          child: Column(
-            children: [
-              SizedBox(
-                height: 100,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: 16, // 16 weeks
-                  itemBuilder: (context, weekIdx) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2.5),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: List.generate(7, (dayIdx) {
-                          final cellDate = startDate.add(Duration(days: weekIdx * 7 + dayIdx));
-                          if (cellDate.isAfter(now)) {
-                            return const SizedBox(width: 11, height: 11);
-                          }
-                          final key = '${cellDate.year}-${cellDate.month.toString().padLeft(2, '0')}-${cellDate.day.toString().padLeft(2, '0')}';
-                          final int level = dateIntensityMap[key] ?? 0;
-
-                          Color cellColor = const Color(0xFF353438).withValues(alpha: 0.3);
-                          if (level == 1) {
-                            cellColor = _accent.withValues(alpha: 0.25);
-                          } else if (level == 2) {
-                            cellColor = _accent.withValues(alpha: 0.5);
-                          } else if (level == 3) {
-                            cellColor = _accent.withValues(alpha: 0.75);
-                          } else if (level == 4) {
-                            cellColor = _accent;
-                          }
-
-                          return Container(
-                            width: 11,
-                            height: 11,
-                            decoration: BoxDecoration(
-                              color: cellColor,
-                              borderRadius: BorderRadius.circular(2.5),
-                            ),
-                          );
-                        }),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Less Intense',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white38,
-                      fontSize: 10,
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      _buildHeatmapLegendCell(
-                        const Color(0xFF353438).withValues(alpha: 0.3),
-                      ),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent.withValues(alpha: 0.25)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent.withValues(alpha: 0.5)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent.withValues(alpha: 0.75)),
-                      const SizedBox(width: 4),
-                      _buildHeatmapLegendCell(_accent),
-                    ],
-                  ),
-                  Text(
-                    'More Intense',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white38,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHeatmapLegendCell(Color color) {
-    return Container(
-      width: 10,
-      height: 10,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(2),
+    return ActivityHeatmap(
+      activities: (_analyticsData?['recentActivities'] as List?) ?? const [],
+      title: 'Activity Intensity Heatmap',
+      titleStyle: GoogleFonts.hankenGrotesk(
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: FontWeight.bold,
       ),
+      accent: _accent,
+      cardColor: _cardBg.withValues(alpha: 0.7),
     );
   }
 
@@ -1940,13 +1792,9 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
       return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
     }
 
-    String formatPace(num? minutesPerKm) {
-      if (minutesPerKm == null || minutesPerKm <= 0) return '—';
-      final mins = minutesPerKm.floor();
-      final secs = ((minutesPerKm - mins) * 60).round();
-      if (secs == 60) return '${mins + 1}:00 /km';
-      return '$mins:${secs.toString().padLeft(2, '0')} /km';
-    }
+    // Pace inverts distance, so the conversion is not the same one distance
+    // uses. Units owns that; doing it here again is how the two drift apart.
+    String formatPace(num? minutesPerKm) => Units.pace(minutesPerKm);
 
     final longest = bestBy('longestDurationSecs');
     final furthest = bestBy('longestDistanceKm');
@@ -1993,7 +1841,7 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
               'Furthest',
               furthest == null
                   ? '—'
-                  : '${(furthest['longestDistanceKm'] as num).toStringAsFixed(1)} km',
+                  : Units.distanceKm(furthest['longestDistanceKm'] as num, decimals: 1),
               furthest == null ? 'No distance logged' : '${furthest['type']}',
             ),
             _buildRecordCard(
@@ -2014,7 +1862,7 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
             'Most Logged',
             '${mostUsed['type']}',
             '${mostUsed['sessions']} sessions'
-            '${(mostUsed['totalDistanceKm'] as num? ?? 0) > 0 ? ' · ${(mostUsed['totalDistanceKm'] as num).toStringAsFixed(0)} km total' : ''}',
+            '${(mostUsed['totalDistanceKm'] as num? ?? 0) > 0 ? ' · ${Units.distanceKm(mostUsed['totalDistanceKm'] as num, decimals: 0)} total' : ''}',
           ),
         ],
       ],
