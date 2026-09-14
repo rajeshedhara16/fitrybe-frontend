@@ -18,6 +18,7 @@ import 'messaging_screen.dart';
 import 'user_profile_screen.dart';
 import 'post_detail_screen.dart';
 import 'settings_screen.dart';
+import 'clique_live_activity_screen.dart';
 
 import '../services/socket_service.dart';
 import '../services/api_service.dart';
@@ -81,19 +82,44 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _backendPosts = [];
   List<Map<String, dynamic>> _suggestedUsers = [];
   Map<String, dynamic> _analytics = const {};
+  List<Map<String, dynamic>> _liveSessions = [];
   bool _isFeedLoading = true;
   String? _feedError;
+
+  final PageController _progressPageController = PageController();
+  int _progressPageIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    SocketService().connect();
+    final socket = SocketService();
+    socket.connect();
+    socket.on('clique:lobby_updated', _onLobbyChanged);
+    socket.on('clique:started', _onLobbyChanged);
     // Seeds the notifications badge and keeps it live while the app is open.
     NotificationService().start();
     _loadBackendFeed();
     _loadSuggestedUsers();
     _loadAnalytics();
+    _loadLiveSessions();
     HealthService().fetchTodayHealthData();
+  }
+
+  void _onLobbyChanged(dynamic _) {
+    if (mounted) _loadLiveSessions();
+  }
+
+  Future<void> _loadLiveSessions() async {
+    try {
+      final sessions = await ApiService.getCliques();
+      if (!mounted) return;
+      setState(() {
+        _liveSessions = sessions.where((s) {
+          final st = '${s['status']}'.toUpperCase();
+          return st == 'LIVE' || st == 'UPCOMING';
+        }).toList();
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadAnalytics() async {
@@ -118,6 +144,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _userPostLikes.clear();
         _postComments.clear();
       });
+      _loadLiveSessions();
+      _loadAnalytics();
     } catch (e) {
       debugPrint('FitRybe feed load error: $e');
       if (!mounted) return;
@@ -139,6 +167,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _progressPageController.dispose();
     super.dispose();
   }
 
@@ -319,10 +348,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           decoration: BoxDecoration(
                             color: const Color(0xFFFF5722).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: const Color(0xFFFF5722).withValues(alpha: 0.25),
-                              width: 1.5,
-                            ),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -372,7 +397,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   </mask>
                                 </defs>
                                 <g fill="currentColor" stroke="currentColor" mask="url(#search-cutout)">
-                                  <path d="M60 56 L92 88" stroke-width="20" stroke-linecap="round" fill="none"/>
+                                  <path d="M60 56 L86 82" stroke-width="17" stroke-linecap="round" fill="none"/>
                                   <circle cx="44" cy="40" r="34" stroke="none" fill="currentColor"/>
                                 </g>
                               </svg>''',
@@ -510,37 +535,39 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             )
           : _currentNavIndex == 3
-              ? SizedBox(
-                  height: 48,
-                  child: FloatingActionButton.extended(
-                    onPressed: () {
-                      HapticFeedback.lightImpact();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              const CreateCliqueActivityScreen(),
+              ? (_activeCliqueSubTab != 2
+                  ? SizedBox(
+                      height: 48,
+                      child: FloatingActionButton.extended(
+                        onPressed: () {
+                          HapticFeedback.lightImpact();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const CreateCliqueActivityScreen(),
+                            ),
+                          );
+                        },
+                        backgroundColor: _accent,
+                        foregroundColor: Colors.white,
+                        shape: const StadiumBorder(),
+                        icon: const Icon(
+                          Symbols.add_rounded,
+                          size: 26,
+                          weight: 900,
+                          grade: 200,
                         ),
-                      );
-                    },
-                    backgroundColor: _accent,
-                    foregroundColor: Colors.white,
-                    shape: const StadiumBorder(),
-                    icon: const Icon(
-                      Symbols.add_rounded,
-                      size: 26,
-                      weight: 900,
-                      grade: 200,
-                    ),
-                    label: Text(
-                      'Create Activity',
-                      style: GoogleFonts.hankenGrotesk(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13.5,
+                        label: Text(
+                          'Create Activity',
+                          style: GoogleFonts.hankenGrotesk(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13.5,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                )
+                    )
+                  : null)
           : _currentNavIndex == 1
               ? (_activeTrybesSubTab == 0
                   ? SizedBox(
@@ -635,7 +662,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildWeeklyStats(),
+                    _buildProgressCarousel(),
                     _buildGrowYourTrybeSection(),
                     if (_isFeedLoading)
                       const Padding(
@@ -1108,85 +1135,712 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
-  Widget _buildWeeklyStats() {
+  Widget _buildProgressCarousel() {
     return ValueListenableBuilder<HealthDataSummary>(
       valueListenable: HealthService().healthNotifier,
       builder: (context, health, _) {
+        final List<dynamic> activities =
+            _analytics['recentActivities'] as List<dynamic>? ?? const [];
+
+        final List<Widget> slides = [
+          _buildWeeklySlide(health, activities),
+          _buildDailySlide(health, activities),
+          _buildStreakSlide(activities),
+          if (_liveSessions.isNotEmpty)
+            ..._liveSessions.take(2).map((s) => _buildLiveOrChallengeSlide(s))
+          else
+            _buildLiveOrChallengeSlide(null),
+        ];
+
         return Container(
           color: const Color(0xFF1B1B1E).withValues(alpha: 0.5),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 14),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'WEEKLY PROGRESS',
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white60,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () {
-                      HapticFeedback.lightImpact();
-                      setState(() {
-                        _currentNavIndex = 2;
-                      });
-                    },
-                    child: Text(
-                      'Details',
-                      style: GoogleFonts.hankenGrotesk(
-                        color: _accent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+              SizedBox(
+                height: 110,
+                child: PageView(
+                  controller: _progressPageController,
+                  physics: const BouncingScrollPhysics(),
+                  onPageChanged: (index) {
+                    setState(() => _progressPageIndex = index);
+                  },
+                  children: slides
+                      .map((slide) => Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: slide,
+                          ))
+                      .toList(),
+                ),
               ),
-              const SizedBox(height: 12),
-              // Device health data is authoritative when present; otherwise
-              // fall back to workouts recorded through the app itself.
-              Builder(builder: (context) {
-                // Counted from Monday in the athlete's own days, the same week
-                // the health service and the goal rings use. The server's
-                // `weekly` block is a rolling seven days, so falling back to it
-                // put a different week behind the same three labels.
-                final logged = GoalProgress.weekToDateTotals(
-                  _analytics['recentActivities'] as List<dynamic>? ?? const [],
-                );
-
-                final workouts = health.weeklyWorkoutsCount > 0
-                    ? health.weeklyWorkoutsCount
-                    : logged.workouts;
-                final distanceKm = health.weeklyDistanceKm > 0
-                    ? health.weeklyDistanceKm
-                    : double.parse(logged.distanceKm.toStringAsFixed(2));
-                final calories = health.weeklyCalories > 0
-                    ? health.weeklyCalories
-                    : logged.calories;
-
-                return Row(
-                  children: [
-                    Expanded(child: _buildStatsCard('Activities', '$workouts', '')),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: _buildStatsCard('Distance',
-                            Units.fromKm(distanceKm).toStringAsFixed(2),
-                            ' ${Units.distanceUnit}')),
-                    const SizedBox(width: 10),
-                    Expanded(child: _buildStatsCard('Calories', '$calories', ' kcal')),
-                  ],
-                );
-              }),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(slides.length, (index) {
+                  final isCurrent = _progressPageIndex == index;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: isCurrent ? 18 : 6,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: isCurrent
+                          ? _accent
+                          : Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  );
+                }),
+              ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildDailySlide(HealthDataSummary health, List<dynamic> activities) {
+    final now = DateTime.now();
+    final todayActivities = activities.where((a) {
+      if (a is! Map) return false;
+      final at = DateTime.tryParse('${a['createdAt'] ?? ''}')?.toLocal();
+      return at != null &&
+          at.year == now.year &&
+          at.month == now.month &&
+          at.day == now.day;
+    }).toList();
+
+    var todayLoggedDistMeters = 0.0;
+    var todayLoggedCalories = 0;
+    for (final a in todayActivities) {
+      todayLoggedDistMeters += (a['distance'] as num?)?.toDouble() ?? 0;
+      todayLoggedCalories += (a['calories'] as num?)?.toInt() ?? 0;
+    }
+    final todayDistKm = health.todayDistanceKm > 0
+        ? health.todayDistanceKm
+        : (todayLoggedDistMeters / 1000.0);
+    final todayCalories = health.todayCalories > 0
+        ? health.todayCalories
+        : todayLoggedCalories;
+    final todayWorkouts = health.todayWorkoutsCount > 0
+        ? health.todayWorkoutsCount
+        : todayActivities.length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  margin: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    color: _accent,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                Text(
+                  "TODAY'S PROGRESS",
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+              ],
+            ),
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                setState(() => _currentNavIndex = 2);
+              },
+              child: Text(
+                'Details',
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatsCard(
+                health.todaySteps > 0 ? 'Steps' : 'Activities',
+                health.todaySteps > 0 ? '${health.todaySteps}' : '$todayWorkouts',
+                '',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildStatsCard(
+                'Distance',
+                Units.fromKm(todayDistKm).toStringAsFixed(2),
+                ' ${Units.distanceUnit}',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildStatsCard(
+                'Calories',
+                '$todayCalories',
+                ' kcal',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWeeklySlide(HealthDataSummary health, List<dynamic> activities) {
+    final logged = GoalProgress.weekToDateTotals(activities);
+    final workouts = health.weeklyWorkoutsCount > 0
+        ? health.weeklyWorkoutsCount
+        : logged.workouts;
+    final distanceKm = health.weeklyDistanceKm > 0
+        ? health.weeklyDistanceKm
+        : double.parse(logged.distanceKm.toStringAsFixed(2));
+    final calories = health.weeklyCalories > 0
+        ? health.weeklyCalories
+        : logged.calories;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'WEEKLY PROGRESS',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                setState(() => _currentNavIndex = 2);
+              },
+              child: Text(
+                'Details',
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(child: _buildStatsCard('Activities', '$workouts', '')),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildStatsCard(
+                'Distance',
+                Units.fromKm(distanceKm).toStringAsFixed(2),
+                ' ${Units.distanceUnit}',
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildStatsCard(
+                'Calories',
+                '$calories',
+                ' kcal',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStreakSlide(List<dynamic> activities) {
+    final Set<DateTime> loggedDays = GoalProgress.activeDays(activities);
+    final currentStreak = GoalProgress.currentStreak(loggedDays);
+    final longestStreak = GoalProgress.longestStreak(loggedDays);
+
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    final weekdays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'STREAK & CONSISTENCY',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                setState(() => _currentNavIndex = 2);
+              },
+              child: Text(
+                'View',
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            // Current streak flame card
+            Expanded(
+              flex: 4,
+              child: Container(
+                height: 72,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _accent.withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: _accent.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.local_fire_department_rounded,
+                        color: _accent,
+                        size: 22,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              '$currentStreak ${currentStreak == 1 ? 'DAY' : 'DAYS'}',
+                              style: GoogleFonts.anybody(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            'Active streak',
+                            style: GoogleFonts.hankenGrotesk(
+                              color: Colors.white54,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            // 7-day consistency & Best streak
+            Expanded(
+              flex: 5,
+              child: Container(
+                height: 72,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'THIS WEEK',
+                          style: GoogleFonts.hankenGrotesk(
+                            color: Colors.white38,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        Text(
+                          'BEST: ${longestStreak}D',
+                          style: GoogleFonts.hankenGrotesk(
+                            color: _accent,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: List.generate(7, (i) {
+                        final day = DateTime(
+                            monday.year, monday.month, monday.day + i);
+                        final isLogged = loggedDays.contains(day);
+                        final isFuture = day
+                            .isAfter(DateTime(now.year, now.month, now.day));
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 14,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                color: isLogged
+                                    ? _accent
+                                    : (isFuture
+                                        ? const Color(0xFF141416)
+                                        : const Color(0xFF2E2E32)),
+                                shape: BoxShape.circle,
+                              ),
+                              alignment: Alignment.center,
+                              child: isLogged
+                                  ? const Icon(Icons.check,
+                                      color: Colors.white, size: 9)
+                                  : null,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              weekdays[i],
+                              style: GoogleFonts.hankenGrotesk(
+                                color: Colors.white38,
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        );
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLiveOrChallengeSlide(Map<String, dynamic>? liveSession) {
+    if (liveSession != null) {
+      final title = '${liveSession['title'] ?? 'Group Workout'}';
+      final type = '${liveSession['activityType'] ?? 'Running'}';
+      final isLive = '${liveSession['status']}'.toUpperCase() == 'LIVE';
+      final participants =
+          (liveSession['participants'] as List?)?.length ?? 0;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isLive
+                      ? Colors.redAccent.withValues(alpha: 0.2)
+                      : _accent.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: isLive ? Colors.redAccent : _accent,
+                    width: 0.8,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 5,
+                      height: 5,
+                      margin: const EdgeInsets.only(right: 5),
+                      decoration: BoxDecoration(
+                        color: isLive ? Colors.redAccent : _accent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    Text(
+                      isLive ? 'LIVE CLIQUE' : 'UPCOMING CLIQUE',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: isLive ? Colors.redAccent : _accent,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  setState(() => _currentNavIndex = 3);
+                },
+                child: Text(
+                  'All Cliques',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: _accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            height: 72,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: _cardBg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: _accent.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    type.toLowerCase() == 'cycling'
+                        ? Icons.directions_bike_rounded
+                        : type.toLowerCase() == 'walking'
+                            ? Icons.directions_walk_rounded
+                            : Icons.directions_run_rounded,
+                    color: _accent,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$participants joined • $type',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    HapticFeedback.mediumImpact();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => CliqueLiveActivityScreen(
+                          sessionId: liveSession['id'] as String?,
+                          activityName: title,
+                          activityType: type,
+                          isUpcoming: !isLive,
+                        ),
+                      ),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    elevation: 0,
+                    minimumSize: const Size(60, 32),
+                  ),
+                  child: Text(
+                    isLive ? 'Join Live' : 'View Lobby',
+                    style: GoogleFonts.hankenGrotesk(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Fallback discovery challenge slide
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'CHALLENGES & CLIQUE',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white70,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                setState(() => _currentNavIndex = 3);
+              },
+              child: Text(
+                'Explore',
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: _cardBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: _accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.emoji_events_rounded,
+                  color: Color(0xFFFF5722),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Group Challenges',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Compete and move together in Clique',
+                      style: GoogleFonts.hankenGrotesk(
+                        color: Colors.white54,
+                        fontSize: 10.5,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () {
+                  HapticFeedback.mediumImpact();
+                  setState(() => _currentNavIndex = 3);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  elevation: 0,
+                  minimumSize: const Size(60, 32),
+                ),
+                child: Text(
+                  'Join',
+                  style: GoogleFonts.hankenGrotesk(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
