@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/trybe_activity_options.dart';
 import '../services/api_service.dart';
+import '../services/units.dart';
 import '../widgets/user_avatar.dart';
 
 class CreateTrybeScreen extends StatefulWidget {
@@ -23,6 +25,7 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _descController = TextEditingController();
   final TextEditingController _memberSearchController = TextEditingController();
+  final TextEditingController _goalController = TextEditingController();
 
   File? _trybeImageFile;
   final ImagePicker _picker = ImagePicker();
@@ -34,43 +37,6 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
   final Set<String> _selectedActivities = {'Running', 'Gym Workout'};
 
   bool _isExpandedActivities = false;
-
-  final List<Map<String, dynamic>> _allActivityOptions = [
-    {'name': 'Walking', 'icon': Icons.directions_walk_rounded},
-    {'name': 'Running', 'icon': Icons.directions_run_rounded},
-    {'name': 'Hiking', 'icon': Icons.hiking_rounded},
-    {'name': 'Cycling', 'icon': Icons.directions_bike_rounded},
-    {'name': 'Roller Skating', 'icon': Icons.roller_skating_rounded},
-    {'name': 'Skateboarding', 'icon': Icons.skateboarding_rounded},
-    {'name': 'Scooter Riding', 'icon': Icons.electric_scooter_rounded},
-    {'name': 'Wheelchair Activity', 'icon': Icons.accessible_rounded},
-    {'name': 'Dog Walking', 'icon': Icons.pets_rounded},
-    {'name': 'Open Water Swimming', 'icon': Icons.pool_rounded},
-    {'name': 'Kayaking', 'icon': Icons.kayaking_rounded},
-    {'name': 'Canoeing', 'icon': Icons.rowing_rounded},
-    {'name': 'Paddleboarding', 'icon': Icons.surfing_rounded},
-    {'name': 'Skiing', 'icon': Icons.downhill_skiing_rounded},
-    {'name': 'Snowboarding', 'icon': Icons.snowboarding_rounded},
-    {'name': 'Nature Walk', 'icon': Icons.forest_rounded},
-    {'name': 'Commute Walk', 'icon': Icons.directions_walk_rounded},
-    {'name': 'Commute Ride', 'icon': Icons.directions_bike_rounded},
-    {'name': 'Gym Workout', 'icon': Icons.fitness_center_rounded},
-    {'name': 'Football/Soccer', 'icon': Icons.sports_soccer_rounded},
-    {'name': 'Basketball', 'icon': Icons.sports_basketball_rounded},
-    {'name': 'Volleyball', 'icon': Icons.sports_volleyball_rounded},
-    {'name': 'Tennis', 'icon': Icons.sports_tennis_rounded},
-    {'name': 'Badminton', 'icon': Icons.sports_tennis_rounded},
-    {'name': 'Cricket', 'icon': Icons.sports_cricket_rounded},
-    {'name': 'Rugby', 'icon': Icons.sports_rugby_rounded},
-    {'name': 'Boxing', 'icon': Icons.sports_mma_rounded},
-    {'name': 'Martial Arts', 'icon': Icons.sports_kabaddi_rounded},
-    {'name': 'Yoga (Outdoor)', 'icon': Icons.self_improvement_rounded},
-    {'name': 'Calisthenics (Park)', 'icon': Icons.accessibility_new_rounded},
-    {'name': 'Rock Climbing', 'icon': Icons.filter_hdr_rounded},
-    {'name': 'Golf', 'icon': Icons.sports_golf_rounded},
-    {'name': 'Disc Golf', 'icon': Icons.track_changes_rounded},
-    {'name': 'Frisbee', 'icon': Icons.sports_handball_rounded},
-  ];
 
   // Athletes suggested for invitation, loaded from the API.
   List<Map<String, dynamic>> _suggestedMembers = [];
@@ -96,6 +62,7 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
     _nameController.dispose();
     _descController.dispose();
     _memberSearchController.dispose();
+    _goalController.dispose();
     super.dispose();
   }
 
@@ -133,6 +100,26 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
       return;
     }
 
+    final goalText = _goalController.text.trim().replaceAll(',', '.');
+    final enteredGoal = goalText.isEmpty ? null : double.tryParse(goalText);
+    if (goalText.isNotEmpty && (enteredGoal == null || enteredGoal <= 0)) {
+      HapticFeedback.vibrate();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text(
+            'Enter the weekly goal as a number, like 50, or leave it empty',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+      return;
+    }
+    // Typed in the athlete's own unit, stored in kilometres.
+    final goalKm = enteredGoal == null
+        ? null
+        : double.parse(Units.toKm(enteredGoal).toStringAsFixed(2));
+
     if (_isCreating) return;
     HapticFeedback.mediumImpact();
     setState(() => _isCreating = true);
@@ -147,6 +134,7 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
             _selectedActivities.isNotEmpty ? _selectedActivities.first : null,
         isPublic: _trybeType == 'Public',
         activityInterests: _selectedActivities.toList(),
+        weeklyGoalKm: goalKm,
         image: _trybeImageFile,
       );
 
@@ -427,17 +415,17 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                       ? _getOrderedActivityOptions()
                       : _getOrderedActivityOptions().take(6).toList())
                   .map((act) {
-                final isSelected = _selectedActivities.contains(act['name']);
+                final isSelected = _selectedActivities.contains(act.name);
                 return GestureDetector(
                   onTap: () {
                     HapticFeedback.selectionClick();
                     setState(() {
                       if (isSelected) {
                         if (_selectedActivities.length > 1) {
-                          _selectedActivities.remove(act['name']);
+                          _selectedActivities.remove(act.name);
                         }
                       } else {
-                        _selectedActivities.add(act['name']!);
+                        _selectedActivities.add(act.name);
                       }
                     });
                   },
@@ -455,13 +443,13 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          act['icon'] as IconData,
+                          act.icon,
                           size: 16,
                           color: isSelected ? _accent : Colors.white60,
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          act['name']!,
+                          act.name,
                           style: GoogleFonts.hankenGrotesk(
                             color: isSelected ? Colors.white : Colors.white70,
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -473,6 +461,43 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
                   ),
                 );
               }).toList(),
+            ),
+            const SizedBox(height: 28),
+
+            // Weekly goal
+            _buildSectionTitle('WEEKLY GOAL (OPTIONAL)'),
+            const SizedBox(height: 4),
+            Text(
+              'A shared distance the whole Trybe works toward, Monday to Sunday',
+              style: GoogleFonts.hankenGrotesk(color: Colors.white38, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _goalController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+              style: GoogleFonts.hankenGrotesk(color: Colors.white, fontSize: 15),
+              decoration: InputDecoration(
+                hintText: 'e.g. 100',
+                hintStyle: GoogleFonts.hankenGrotesk(color: Colors.white30),
+                suffixText: Units.distanceUnit,
+                suffixStyle: GoogleFonts.hankenGrotesk(color: Colors.white54, fontWeight: FontWeight.w600),
+                filled: true,
+                fillColor: _cardBg,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: _accent),
+                ),
+              ),
             ),
             const SizedBox(height: 28),
 
@@ -608,12 +633,12 @@ class _CreateTrybeScreenState extends State<CreateTrybeScreen> {
     );
   }
 
-  List<Map<String, dynamic>> _getOrderedActivityOptions() {
-    final selectedList = _allActivityOptions
-        .where((act) => _selectedActivities.contains(act['name']))
+  List<({String name, IconData icon})> _getOrderedActivityOptions() {
+    final selectedList = trybeActivityOptions
+        .where((act) => _selectedActivities.contains(act.name))
         .toList();
-    final unselectedList = _allActivityOptions
-        .where((act) => !_selectedActivities.contains(act['name']))
+    final unselectedList = trybeActivityOptions
+        .where((act) => !_selectedActivities.contains(act.name))
         .toList();
     return [...selectedList, ...unselectedList];
   }

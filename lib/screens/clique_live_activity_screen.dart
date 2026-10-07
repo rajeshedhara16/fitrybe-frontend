@@ -5,12 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/api_service.dart';
 import '../services/units.dart';
-import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/socket_service.dart';
 import '../services/achievement_service.dart';
-import '../services/calorie_estimator.dart';
-import '../services/location_tracker.dart';
+import '../services/live_session.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 
@@ -70,30 +68,81 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   String _scheduledTime = 'Today, 7:30 PM';
   bool _isStarting = false;
   String _startButtonText = 'START ACTIVITY';
-  bool _isRecording = false;
-  bool _isPaused = false;
-  Timer? _stopwatchTimer;
-  int _elapsedSeconds = 0;
+  bool _isSheetMinimized = false;
 
-  /// Kilometres measured by the GPS, never derived from elapsed time. This is
-  /// what gets broadcast to the squad and saved as the workout.
-  double get _activeDistance => _tracker.distanceKm;
-  int _activeCalories = 0;
+  /// Whether the goal-reached moment has already been handled, so a workout is
+  /// finished once rather than every second afterwards.
+  bool _goalCelebrated = false;
+
+  /// This athlete has finished their leg. Known here the moment it happens, so
+  /// the screen never depends on the server answering to stop showing a lobby.
+  bool _locallyFinished = false;
+
+  /// What their leg measured, held for the ended view until the server's own
+  /// figures come back.
+  LiveSessionSummary? _mySummary;
+
+  /// The workout lives in [LiveSession], not in this screen. That is what lets
+  /// an athlete walk back to the feed and return without the clock resetting
+  /// or the GPS being torn down underneath them.
+  LiveSession get _live => LiveSession();
+
+  /// Whether the session on screen is the one currently being recorded.
+  bool get _isRecording => _live.isActive && _live.sessionId == widget.sessionId;
+
+  bool get _isPaused => _isRecording && _live.state.isPaused;
+
+  /// This athlete's own row on the squad list, which carries their settled
+  /// figures once they have finished.
+  Map<String, dynamic> get _myRow {
+    final mine = _squadMembers.where((m) => m['isYou'] == true);
+    return mine.isEmpty ? const <String, dynamic>{} : mine.first;
+  }
+
+  /// Whether this athlete has already finished their own leg. True as soon as
+  /// it happens locally, and from the server's roster afterwards.
+  bool get _iFinished =>
+      _locallyFinished ||
+      '${_myRow['status'] ?? ''}'.toUpperCase() == 'COMPLETED';
+
+  /// Nothing more will be recorded here: this athlete is done, or the whole
+  /// activity is over.
+  bool get _isEnded => _iFinished || _isCompleted;
+
+  // While recording, the numbers come from the running session. Afterwards
+  // they come from what was saved, so a finished session reads back correctly
+  // instead of showing zeroes.
+  int get _elapsedSeconds => _isRecording
+      ? _live.state.elapsedSeconds
+      : (_mySummary?.elapsed.inSeconds ??
+          (_myRow['duration'] as num?)?.toInt() ??
+          0);
+
+  /// Kilometres measured by the GPS, never derived from elapsed time.
+  double get _activeDistance => _isRecording
+      ? _live.state.distanceKm
+      : (_mySummary?.distanceKm ??
+          (_myRow['distance'] as num?)?.toDouble() ??
+          0);
+
+  int get _activeCalories => _isRecording
+      ? _live.state.calories
+      : (_mySummary?.calories ?? (_myRow['calories'] as num?)?.toInt() ?? 0);
 
   /// Zero means "no sensor reading" — the UI shows `--` rather than a number
   /// we made up.
-  int _activeHeartRate = 0;
-  bool _isSheetMinimized = false;
-
-  /// Sole source of this athlete's distance and route for the session.
-  final LocationTracker _tracker = LocationTracker();
+  int get _activeHeartRate => _isRecording ? _live.state.heartRate : 0;
 
   /// Explains an empty distance readout when location is unavailable.
-  String? _locationWarning;
+  String? get _locationWarning => _isRecording ? _live.state.locationWarning : null;
 
   /// True only for the athlete who created the session — they alone can invite
   /// and start. Derived from the server record, never assumed.
   bool _currentUserIsAdmin = false;
+
+  /// True once the session itself is over. The lobby controls go with it:
+  /// nothing about a finished activity can be started or readied up for.
+  bool _isCompleted = false;
 
   /// Whether the signed-in user has accepted their invite (is in the lobby).
   bool _hasJoined = false;
@@ -130,6 +179,30 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     )..repeat(reverse: true);
     _loadSession();
     _joinTelemetryRoom();
+    _live.notifier.addListener(_onLiveChanged);
+    _live.isViewOpen = true;
+  }
+
+  /// Redraws as the running session reports distance, pace and the clock.
+  void _onLiveChanged() {
+    if (!mounted) return;
+    setState(_refreshMyRow);
+    _checkGoalReached();
+  }
+
+  /// Hands this session to [LiveSession], which owns the clock, the GPS and
+  /// the telemetry from here on. Starting one that is already running is a
+  /// no-op, so returning to this screen never restarts anything.
+  Future<void> _startLive() async {
+    await _live.start(
+      mode: LiveMode.clique,
+      sessionId: widget.sessionId,
+      activityType: _selectedActivityType,
+      title: _selectedActivityName,
+      goalType: _goalType,
+      goalTarget: _goalValue,
+    );
+    if (mounted) setState(_refreshMyRow);
   }
 
   /// Subscribes to the session room so other participants' GPS telemetry
@@ -181,13 +254,8 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     if (status == 'LIVE') {
       setState(() => _isUpcoming = false);
       // The host pressed Start — everyone in the lobby begins tracking now.
-      if (!_isRecording && !_currentUserIsAdmin && _hasJoined) {
-        setState(() {
-          _isRecording = true;
-          _isPaused = false;
-        });
-        _startTimer();
-        _beginTracking();
+      if (!_isRecording && !_currentUserIsAdmin && _hasJoined && !_iFinished) {
+        _startLive();
         HapticFeedback.heavyImpact();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -201,11 +269,18 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         );
       }
     } else if (status == 'COMPLETED') {
-      _stopwatchTimer?.cancel();
+      // Somebody met the goal, or the host closed it. The activity is over for
+      // the squad, and this screen shows it as ended.
       setState(() {
-        _isRecording = false;
-        _isPaused = false;
+        _isUpcoming = false;
+        _isCompleted = true;
       });
+      // The activity is over for the squad. This athlete's own leg is saved
+      // with whatever they covered, so nobody loses a workout to someone else
+      // reaching the goal first.
+      if (_isRecording) {
+        _finishAndSaveActivity();
+      }
     }
   }
 
@@ -224,10 +299,15 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     }
 
     final session = await ApiService.getClique(id);
-    if (!mounted || session == null) {
+    if (session == null) {
+      // The session is gone from the server; nothing left to record against.
+      if (_live.isActive && _live.sessionId == id) {
+        await _live.discard();
+      }
       if (mounted) setState(() => _isSquadLoading = false);
       return;
     }
+    if (!mounted) return;
     _applySession(session);
   }
 
@@ -258,7 +338,10 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         'isYou': isYou,
         'distance': ((p['currentDistance'] as num?)?.toDouble() ?? 0) / 1000,
         'pace': _formatPace((p['currentPace'] as num?)?.toDouble() ?? 0),
-        'calories': 0,
+        // What the server kept for them, so a session opened later shows real
+        // figures rather than a row of zeroes.
+        'calories': (p['currentCalories'] as num?)?.toInt() ?? 0,
+        'duration': (p['currentDuration'] as num?)?.toInt() ?? 0,
         'heartRate': 0,
         // Readiness is its own flag now; INVITED members have not accepted yet.
         'isReady': p['isReady'] == true,
@@ -271,12 +354,35 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     final me = members.where((m) => m['isYou'] == true).toList();
 
     setState(() {
-      _isUpcoming = '${session['status']}'.toUpperCase() != 'LIVE';
+      final sessionStatus = '${session['status']}'.toUpperCase();
+      _isCompleted = sessionStatus == 'COMPLETED' || sessionStatus == 'CANCELLED';
+      _isUpcoming = sessionStatus != 'LIVE' && !_isCompleted;
       _selectedActivityName = '${session['title'] ?? _selectedActivityName}';
       _selectedActivityType =
           '${session['activityType'] ?? _selectedActivityType}';
-      final target = (session['targetDistance'] as num?)?.toDouble();
-      if (target != null && target > 0) _goalValue = target;
+      // The goal belongs to the session, so everyone invited sees the one the
+      // host set instead of this screen's defaults.
+      final targetDistance = (session['targetDistance'] as num?)?.toDouble();
+      final targetDuration = (session['targetDuration'] as num?)?.toInt();
+      final targetCalories = (session['targetCalories'] as num?)?.toInt();
+      if (targetDuration != null && targetDuration > 0) {
+        _goalType = 'Duration';
+        _goalValue = targetDuration / 60;
+        _goalUnit = 'min';
+      } else if (targetCalories != null && targetCalories > 0) {
+        _goalType = 'Calories';
+        _goalValue = targetCalories.toDouble();
+        _goalUnit = 'kcal';
+      } else if (targetDistance != null && targetDistance > 0) {
+        _goalType = 'Distance';
+        _goalValue = targetDistance;
+        _goalUnit = 'km';
+      }
+      // A session already running was started before its details arrived, so
+      // the goal is handed over now rather than being lost.
+      if (_isRecording) {
+        _live.updateGoal(type: _goalType, target: _goalValue);
+      }
 
       _currentUserIsAdmin = '${session['creatorId'] ?? ''}' == myId;
       _hasJoined = me.isNotEmpty && me.first['hasJoined'] == true;
@@ -296,13 +402,11 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     // the live UI appeared but the clock never started and nothing was
     // recorded for this athlete.
     final isLive = '${session['status']}'.toUpperCase() == 'LIVE';
-    if (isLive && _hasJoined && !_isRecording) {
-      setState(() {
-        _isRecording = true;
-        _isPaused = false;
-      });
-      _startTimer();
-      _beginTracking();
+    // A session already being recorded is one this athlete came back to, so it
+    // is left exactly as it is. Someone who has finished their leg, or a
+    // session that is over, never starts again.
+    if (isLive && _hasJoined && !_live.isActive && !_iFinished && !_isCompleted) {
+      _startLive();
     }
   }
 
@@ -331,17 +435,19 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
   @override
   void dispose() {
+    _live.notifier.removeListener(_onLiveChanged);
+    _live.isViewOpen = false;
     SocketService()
       ..off('clique:telemetry_update')
       ..off('clique:status_updated')
       ..off('clique:lobby_updated');
-    if (widget.sessionId != null) {
+    // Stay in the room while still running, so this athlete's telemetry keeps
+    // reaching the squad from whatever screen they wander off to.
+    if (widget.sessionId != null && !_isRecording) {
       SocketService()
           .leaveRoom('clique:join', 'clique:leave', widget.sessionId!);
     }
-    _tracker.stop();
     _pulseController.dispose();
-    _stopwatchTimer?.cancel();
     super.dispose();
   }
 
@@ -418,74 +524,26 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         countdown--;
       } else {
         timer.cancel();
-        setState(() {
-          _isStarting = false;
-          _isRecording = true;
-          _isPaused = false;
-        });
+        setState(() => _isStarting = false);
         // Flip the session to LIVE. The server fans the change out to the
         // squad, so there is no client-side relay to trust.
         if (widget.sessionId != null) {
           ApiService.updateCliqueStatus(widget.sessionId!, 'LIVE');
         }
-        _startTimer();
-        _beginTracking();
+        _startLive();
       }
     });
-  }
-
-  void _startTimer() {
-    _stopwatchTimer?.cancel();
-    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      if (!_isPaused) {
-        setState(() {
-          _elapsedSeconds++;
-          // Calories follow measured distance, not the clock, so an athlete
-          // who has not set off yet shows a burn of zero.
-          _activeCalories = CalorieEstimator.fromDistance(
-            activity: _selectedActivityType,
-            distanceKm: _tracker.distanceKm,
-          );
-          _activeHeartRate = HealthService().healthNotifier.value.heartRate;
-          _refreshMyRow();
-        });
-
-        // Broadcast our measured progress to the rest of the squad.
-        _broadcastTelemetry();
-      }
-    });
-  }
-
-  /// Starts GPS measurement for this athlete's leg of the session. Tracking
-  /// failure downgrades the workout to duration-only rather than falling back
-  /// to invented distance.
-  Future<void> _beginTracking() async {
-    _tracker.reset();
-    if (mounted) setState(() => _locationWarning = null);
-    try {
-      await _tracker.start(onUpdate: () {
-        if (!mounted) return;
-        setState(_refreshMyRow);
-        _broadcastTelemetry();
-      });
-    } on LocationDeniedException catch (e) {
-      if (!mounted) return;
-      setState(() => _locationWarning = e.message);
-    } catch (e) {
-      debugPrint('Clique GPS start error: $e');
-      if (!mounted) return;
-      setState(() =>
-          _locationWarning = 'Distance is unavailable — GPS could not start.');
-    }
   }
 
   /// Mirrors this athlete's live figures onto their leaderboard row. Other
   /// rows move only when their own device sends telemetry over the socket.
   void _refreshMyRow() {
+    // Only a running workout may overwrite the row; otherwise reopening a
+    // finished session would wipe its saved figures with live zeroes.
+    if (!_isRecording) {
+      _sortSquadMembers();
+      return;
+    }
     final myIndex = _squadMembers.indexWhere((m) => m['isYou'] == true);
     if (myIndex != -1) {
       _squadMembers[myIndex]['distance'] = _activeDistance;
@@ -494,20 +552,6 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       _squadMembers[myIndex]['pace'] = _getPaceString();
     }
     _sortSquadMembers();
-  }
-
-  void _broadcastTelemetry() {
-    final id = widget.sessionId;
-    if (id == null || !_isRecording) return;
-    final position = _tracker.lastPosition;
-    SocketService().emit('clique:telemetry', {
-      'sessionId': id,
-      if (position != null) 'lat': position.latitude,
-      if (position != null) 'lng': position.longitude,
-      'distance': _tracker.distanceMeters,
-      'calories': _activeCalories,
-      'pace': _tracker.paceMinPerKm(_elapsedSeconds) ?? 0,
-    });
   }
 
   void _sortSquadMembers() {
@@ -522,31 +566,82 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
   void _togglePause() {
     HapticFeedback.mediumImpact();
-    setState(() {
-      _isPaused = !_isPaused;
-      _tracker.isPaused = _isPaused;
-    });
+    _live.togglePause();
+    if (mounted) setState(() {});
   }
 
-  Future<void> _finishAndSaveActivity() async {
-    HapticFeedback.heavyImpact();
-    _stopwatchTimer?.cancel();
+  /// The button shown once nothing is being recorded any more.
+  Widget _buildEndedButton() {
+    if (!_isEnded) return const SizedBox.shrink();
+    return SizedBox(
+      width: double.infinity,
+      height: 56,
+      child: ElevatedButton(
+        onPressed: null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: _surfaceHigh,
+          disabledBackgroundColor: _surfaceHigh,
+          elevation: 0,
+          shape: const StadiumBorder(),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white54, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              'ACTIVITY ENDED',
+              style: GoogleFonts.hankenGrotesk(
+                color: Colors.white54,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-    final formattedTime = _formatElapsedTime(_elapsedSeconds);
+  /// Ends this athlete's leg, saves it, and leaves them here looking at what
+  /// they did. [endSession] closes the activity for the whole squad, which is
+  /// what meeting the session's goal does.
+  Future<void> _finishAndSaveActivity({bool endSession = false}) async {
+    // The goal being met and the squad's session closing can land together;
+    // the workout is saved once.
+    if (_locallyFinished) return;
+    HapticFeedback.heavyImpact();
+
+    final summary = await _live.finish();
+    // Shown as ended straight away: whether the server can be reached has no
+    // bearing on the fact that this athlete has stopped.
+    if (mounted) {
+      setState(() {
+        _locallyFinished = true;
+        _mySummary = summary;
+      });
+    }
+    final seconds = summary?.elapsed.inSeconds ?? 0;
+    final metres = summary?.distanceMetres ?? 0;
+    final calories = summary?.calories ?? 0;
+    final km = metres / 1000;
+    final route = summary?.route ?? const <Map<String, double>>[];
+
+    final formattedTime = _formatElapsedTime(seconds);
     final statsString =
-        "Distance: ${_activeDistance.toStringAsFixed(2)} KM, Duration: $formattedTime, Calories: $_activeCalories KCAL.";
+        "Distance: ${km.toStringAsFixed(2)} KM, Duration: $formattedTime, Calories: $calories KCAL.";
+    if (mounted) setState(() {});
 
     try {
       // Save the workout itself, then share it to the feed.
-      final route = _tracker.routeAsJson();
       final activity = await ApiService.logActivity({
         'title': _selectedActivityName,
         'type': _selectedActivityType,
-        'duration': _elapsedSeconds,
-        'distance': _tracker.distanceMeters,
-        'calories': _activeCalories,
-        if (_activeDistance > 0.01)
-          'avgPace': (_elapsedSeconds / 60) / _activeDistance,
+        'duration': seconds,
+        'distance': metres,
+        'calories': calories,
+        if (km > 0.01) 'avgPace': (seconds / 60) / km,
         if (route.isNotEmpty) 'routeData': route,
         // Marks it as a clique workout, which keeps it out of the solo
         // recorder's history while it still counts towards stats and goals.
@@ -560,9 +655,17 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         activityId: activity?['id'] as String?,
       );
 
-      // The host closing the session ends it for everyone.
-      if (widget.sessionId != null && _currentUserIsAdmin) {
-        await ApiService.updateCliqueStatus(widget.sessionId!, 'COMPLETED');
+      // Settles this athlete's row on the squad leaderboard. The server
+      // closes the session itself once nobody is left running.
+      if (widget.sessionId != null) {
+        await ApiService.finishClique(
+          widget.sessionId!,
+          distance: metres,
+          duration: seconds,
+          calories: calories,
+          endSession: endSession,
+        );
+        await _loadSession();
       }
       AchievementService().sync();
 
@@ -571,7 +674,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
         SnackBar(
           backgroundColor: _accent,
           content: Text(
-            '$_selectedActivityName activity saved successfully!',
+            '$_selectedActivityName saved. Here is how it went.',
             style: GoogleFonts.hankenGrotesk(
               color: Colors.white,
               fontWeight: FontWeight.bold,
@@ -579,7 +682,6 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
           ),
         ),
       );
-      Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -635,7 +737,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                         16,
                         8,
                         16,
-                        _isRecording ? 260 : 24,
+                        (_isRecording || _isEnded) ? 260 : 24,
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -644,7 +746,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                           _buildGoalCompletionCard(),
                           const SizedBox(height: 20),
 
-                          if (_isRecording) ...[
+                          if (_isRecording || _isEnded) ...[
                             // Leaderboard Title & Filter Row
                             _buildLeaderboardHeader(),
                             const SizedBox(height: 16),
@@ -660,8 +762,8 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                     ),
                   ),
 
-                  // ── Active Recording Metrics Modal (Only when live) ────
-                  if (_isRecording)
+                  // ── Metrics sheet: live figures, then the final ones ──
+                  if (_isRecording || _isEnded)
                     Positioned(
                       left: 0,
                       right: 0,
@@ -764,7 +866,11 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    _isRecording ? 'LIVE' : 'LOBBY',
+                    _isRecording
+                        ? 'LIVE'
+                        : _isEnded
+                            ? 'ENDED'
+                            : 'LOBBY',
                     style: GoogleFonts.hankenGrotesk(
                       color: Colors.white54,
                       fontSize: 11,
@@ -782,16 +888,46 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   }
 
   // ─── Goal Completion Card ──────────────────────────────────────────────────
-  Widget _buildGoalCompletionCard() {
-    double currentVal = _activeDistance;
-    if (_goalType == 'Duration') {
-      currentVal = _elapsedSeconds / 60.0;
-    } else if (_goalType == 'Calories') {
-      currentVal = _activeCalories.toDouble();
-    }
+  /// What this athlete has done so far in the goal's own unit.
+  double _goalCurrentValue() {
+    if (_goalType == 'Duration') return _elapsedSeconds / 60.0;
+    if (_goalType == 'Calories') return _activeCalories.toDouble();
+    return _activeDistance;
+  }
 
-    final double goalVal = _goalValue > 0 ? _goalValue : 5.0;
-    final double progress = (currentVal / goalVal).clamp(0.0, 1.0);
+  double get _goalTarget => _goalValue > 0 ? _goalValue : 5.0;
+
+  /// How far through the goal they are, 0 to 1.
+  double _goalProgress() => (_goalCurrentValue() / _goalTarget).clamp(0.0, 1.0);
+
+  /// Ends the workout the moment the goal is met. The athlete set a target;
+  /// carrying on counting past it is what made the session feel broken.
+  void _checkGoalReached() {
+    if (_goalCelebrated || !_isRecording) return;
+    if (!_live.goalReached) return;
+    _goalCelebrated = true;
+    HapticFeedback.heavyImpact();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: _accent,
+        duration: const Duration(seconds: 4),
+        content: Text(
+          '${_goalType.toLowerCase()} goal reached. Saving your workout.',
+          style: GoogleFonts.hankenGrotesk(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+    _finishAndSaveActivity(endSession: true);
+  }
+
+  Widget _buildGoalCompletionCard() {
+    final double currentVal = _goalCurrentValue();
+    final double goalVal = _goalTarget;
+    final double progress = _goalProgress();
     final int percent = (progress * 100).toInt();
 
     String currentStr = currentVal.toStringAsFixed(2);
@@ -958,7 +1094,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
               // Row 4: Status text
               Text(
                 progress >= 1.0
-                    ? '0 $_goalUnit remaining'
+                    ? 'Goal reached'
                     : '${((1.0 - progress) * goalVal).toStringAsFixed(1)} $_goalUnit remaining',
                 style: GoogleFonts.hankenGrotesk(
                   color: Colors.white54,
@@ -1280,7 +1416,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
         // The host starts the activity; everyone else only sets readiness.
         if (_currentUserIsAdmin)
-          if (_isUpcoming)
+          if (_isUpcoming && !_isEnded)
             Column(
               children: [
                 SizedBox(
@@ -1655,7 +1791,9 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                       const SizedBox(height: 24),
 
                       // Main Action Control Button
-                      if (!_isPaused)
+                      if (!_isRecording)
+                        _buildEndedButton()
+                      else if (!_isPaused)
                         SizedBox(
                           width: double.infinity,
                           height: 56,

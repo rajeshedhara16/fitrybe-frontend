@@ -161,15 +161,23 @@ class _ActivityHeatmapState extends State<ActivityHeatmap> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              widget.title,
-              style: widget.titleStyle ??
-                  GoogleFonts.hankenGrotesk(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+            // The title gives way to the toggle, so a long title or a large
+            // system text size shortens it with an ellipsis instead of pushing
+            // the row off the side of a small phone.
+            Flexible(
+              child: Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: widget.titleStyle ??
+                    GoogleFonts.hankenGrotesk(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
             ),
+            const SizedBox(width: 12),
             _buildModeToggle(),
           ],
         ),
@@ -380,12 +388,20 @@ class _ActivityHeatmapState extends State<ActivityHeatmap> {
             ),
           ],
         ),
-        Text(
-          '$totalActive / $daysInMonth active ${totalActive == 1 ? 'day' : 'days'}',
-          style: GoogleFonts.hankenGrotesk(
-            color: Colors.white54,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
+        const SizedBox(width: 8),
+        // The count gives way first on a narrow screen, so the arrows and the
+        // month name always stay whole and tappable.
+        Flexible(
+          child: Text(
+            '$totalActive / $daysInMonth active ${totalActive == 1 ? 'day' : 'days'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.end,
+            style: GoogleFonts.hankenGrotesk(
+              color: Colors.white54,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
       ],
@@ -573,7 +589,6 @@ class _ActivityHeatmapState extends State<ActivityHeatmap> {
     }
 
     final isFuture = day.isAfter(today);
-    final isToday = day == today;
     final mins = minutes[day];
     final level = isFuture ? 0 : ActivityHeatmap.levelFor(mins);
 

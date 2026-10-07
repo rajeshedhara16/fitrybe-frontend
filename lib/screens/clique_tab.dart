@@ -6,6 +6,8 @@ import 'synergy_orbit.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
 import '../services/socket_service.dart';
+import '../services/units.dart';
+import '../services/when_format.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 
@@ -22,13 +24,19 @@ class _CliqueTabState extends State<CliqueTab>
   final Color _accent = const Color(0xFFFF5722);
   final Color _cardBg = const Color(0xFF1E1E22);
 
-  int _activeSegmentTab = 0; // 0: Activity, 1: Challenges, 2: Synergy
+  /// Challenges have no backend yet, so the tab is kept out of the app rather
+  /// than showing an empty screen under its own heading. Everything for it is
+  /// still written below: set this to true when the feature lands.
+  static const bool _challengesEnabled = false;
+
+  int _activeSegmentTab = 0; // 0: Activity, 1: Challenges (hidden), 2: Synergy
   final String _selectedCategory = 'All';
 
   final Set<String> _joinedUpcomingIds = {};
 
   List<Map<String, dynamic>> _liveActivities = [];
   List<Map<String, dynamic>> _upcomingActivities = [];
+  List<Map<String, dynamic>> _completedActivities = [];
   bool _isActivitiesLoading = true;
   String? _activitiesError;
 
@@ -61,12 +69,22 @@ class _CliqueTabState extends State<CliqueTab>
   Future<void> _loadSessions() async {
     if (mounted) setState(() => _activitiesError = null);
     try {
-      final sessions = await ApiService.getCliques();
+      // Finished sessions are asked for separately, so a long history cannot
+      // crowd out what is live or still to come.
+      final results = await Future.wait([
+        ApiService.getCliques(),
+        ApiService.getCliques(status: 'COMPLETED'),
+      ]);
+      final sessions = results[0];
+      final completed = results[1];
       if (!mounted) return;
       setState(() {
         _liveActivities = sessions
             .where((s) => '${s['status']}'.toUpperCase() == 'LIVE')
             .map(_toActivityCard)
+            .toList();
+        _completedActivities = completed
+            .where((s) => '${s['status']}'.toUpperCase() == 'COMPLETED')
             .toList();
         _upcomingActivities = sessions
             .where((s) => '${s['status']}'.toUpperCase() == 'UPCOMING')
@@ -182,7 +200,8 @@ class _CliqueTabState extends State<CliqueTab>
                   Row(
                     children: [
                       Expanded(child: _buildSegmentItem(0, 'Activity')),
-                      Expanded(child: _buildSegmentItem(1, 'Challenges')),
+                      if (_challengesEnabled)
+                        Expanded(child: _buildSegmentItem(1, 'Challenges')),
                       Expanded(child: _buildSegmentItem(2, 'Synergy')),
                     ],
                   ),
@@ -198,7 +217,7 @@ class _CliqueTabState extends State<CliqueTab>
             // Conditional Content
             _activeSegmentTab == 0
                 ? _buildActivityTab()
-                : _activeSegmentTab == 1
+                : _activeSegmentTab == 1 && _challengesEnabled
                     ? _buildChallengesTab()
                     : _buildSynergyTabSection(),
           ],
@@ -290,7 +309,9 @@ class _CliqueTabState extends State<CliqueTab>
                 onRetry: _loadSessions,
               ),
             )
-          else if (_liveActivities.isEmpty && _upcomingActivities.isEmpty)
+          else if (_liveActivities.isEmpty &&
+              _upcomingActivities.isEmpty &&
+              _completedActivities.isEmpty)
             _buildEmptyActivityState()
           else ...[
             if (_getFilteredLiveActivities().isNotEmpty) ...[
@@ -331,9 +352,121 @@ class _CliqueTabState extends State<CliqueTab>
                     child: _buildUpcomingActivityCardDynamic(act),
                   )),
             ],
+            if (_completedActivities.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                'COMPLETED',
+                style: GoogleFonts.hankenGrotesk(
+                  color: Colors.white38,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ..._completedActivities.map((act) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _buildCompletedActivityCard(act),
+                  )),
+            ],
           ],
           const SizedBox(height: 100),
         ],
+      ),
+    );
+  }
+
+  /// One finished session, with what this athlete actually did in it.
+  Widget _buildCompletedActivityCard(Map<String, dynamic> act) {
+    final participants = (act['participants'] as List?) ?? const [];
+    final myId = SessionService().userId;
+    final mine = participants.whereType<Map>().firstWhere(
+          (p) => '${p['userId'] ?? ''}' == myId,
+          orElse: () => const {},
+        );
+    final myMetres = (mine['currentDistance'] as num?)?.toDouble() ?? 0;
+    final finished = participants
+        .whereType<Map>()
+        .where((p) => '${p['status'] ?? ''}'.toUpperCase() == 'COMPLETED')
+        .length;
+
+    final endedAt = DateTime.tryParse('${act['endedAt'] ?? act['scheduledAt'] ?? ''}')
+        ?.toLocal();
+
+    return GestureDetector(
+      onTap: () async {
+        HapticFeedback.lightImpact();
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CliqueLiveActivityScreen(
+              sessionId: act['id'] as String?,
+              activityName: '${act['title'] ?? 'Activity'}',
+              activityType: '${act['activityType'] ?? 'Running'}',
+              isUpcoming: false,
+            ),
+          ),
+        );
+        if (mounted) _loadSessions();
+      },
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _cardBg.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.check_rounded, color: Colors.white54, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${act['title'] ?? 'Activity'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    [
+                      if (endedAt != null) WhenFormat.day(endedAt),
+                      '$finished finished',
+                    ].join(' · '),
+                    style: GoogleFonts.hankenGrotesk(
+                      color: Colors.white38,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (myMetres > 0)
+              Text(
+                Units.distance(myMetres),
+                style: GoogleFonts.hankenGrotesk(
+                  color: _accent,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

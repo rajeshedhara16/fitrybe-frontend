@@ -1,7 +1,30 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// A request that never reached the server, or got no answer in time.
+///
+/// Carries words fit to show a person. The errors underneath read like
+/// "ClientException with SocketException: Failed host lookup", and screens
+/// that print an error as-is used to put exactly that on the phone.
+class NetworkException implements Exception {
+  const NetworkException(this.message);
+
+  final String message;
+
+  static const unreachable = NetworkException(
+    "Can't reach Fitrybe. Check your internet connection and try again.",
+  );
+  static const timedOut = NetworkException(
+    'Fitrybe is taking too long to answer. Check your connection and try again.',
+  );
+
+  @override
+  String toString() => message;
+}
 
 /// Thin HTTP layer over the Fitrybe backend.
 ///
@@ -60,21 +83,33 @@ class ApiClient {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _accessToken = prefs.getString(_tokenKey);
-    _refreshToken = prefs.getString(_refreshTokenKey);
+    final aToken = prefs.getString(_tokenKey)?.trim();
+    final rToken = prefs.getString(_refreshTokenKey)?.trim();
+    _accessToken = (aToken == null || aToken.isEmpty || aToken == 'null' || aToken == 'undefined') ? null : aToken;
+    _refreshToken = (rToken == null || rToken.isEmpty || rToken == 'null' || rToken == 'undefined') ? null : rToken;
     accessTokenNotifier.value = _accessToken;
   }
 
-  bool get isAuthenticated => _accessToken != null && _accessToken!.isNotEmpty;
+  bool get isAuthenticated => _accessToken != null && _accessToken!.isNotEmpty && _accessToken != 'null';
   String? get token => _accessToken;
 
   Future<void> saveTokens(String accessToken, String refreshToken) async {
-    _accessToken = accessToken;
-    _refreshToken = refreshToken;
-    accessTokenNotifier.value = accessToken;
+    final aToken = accessToken.trim();
+    final rToken = refreshToken.trim();
+    if (aToken.isEmpty || aToken == 'null' || aToken == 'undefined') {
+      await clearTokens();
+      return;
+    }
+    _accessToken = aToken;
+    _refreshToken = (rToken.isEmpty || rToken == 'null' || rToken == 'undefined') ? null : rToken;
+    accessTokenNotifier.value = aToken;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, accessToken);
-    await prefs.setString(_refreshTokenKey, refreshToken);
+    await prefs.setString(_tokenKey, aToken);
+    if (_refreshToken != null) {
+      await prefs.setString(_refreshTokenKey, _refreshToken!);
+    } else {
+      await prefs.remove(_refreshTokenKey);
+    }
   }
 
   Future<void> clearTokens() async {
@@ -91,8 +126,11 @@ class ApiClient {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    if (_accessToken != null && _accessToken!.isNotEmpty) {
-      map['Authorization'] = 'Bearer $_accessToken';
+    if (_accessToken != null &&
+        _accessToken!.isNotEmpty &&
+        _accessToken != 'null' &&
+        _accessToken != 'undefined') {
+      map['Authorization'] = 'Bearer ${_accessToken!.trim()}';
     }
     return map;
   }
@@ -111,8 +149,21 @@ class ApiClient {
     String endpoint,
     Future<http.Response> Function(Uri uri) req,
   ) async {
-    return await req(_uriFor(origin, endpoint))
-        .timeout(const Duration(seconds: 15));
+    // Every way a request can fail before the server answers becomes one
+    // readable [NetworkException]. A server that answers with an error status
+    // is not caught here; that reply still reaches the caller as a response.
+    try {
+      return await req(_uriFor(origin, endpoint))
+          .timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      throw NetworkException.timedOut;
+    } on SocketException {
+      throw NetworkException.unreachable;
+    } on HandshakeException {
+      throw NetworkException.unreachable;
+    } on http.ClientException {
+      throw NetworkException.unreachable;
+    }
   }
 
   /// Runs [send], and if the access token has expired, refreshes it once and
@@ -174,10 +225,13 @@ class ApiClient {
             ),
           ));
 
+  /// [method] defaults to POST. Editing a Trybe sends its new photo the same way
+  /// with PATCH.
   Future<http.Response> multipartPost(
     String endpoint, {
     Map<String, String>? fields,
     List<http.MultipartFile>? files,
+    String method = 'POST',
   }) async {
     // MultipartFile streams are single-use, so buffer them into bytes to allow
     // the request to be rebuilt on a token refresh retry.
@@ -189,7 +243,7 @@ class ApiClient {
     }
 
     Future<http.Response> sendWithUri(Uri uri) async {
-      final request = http.MultipartRequest('POST', uri);
+      final request = http.MultipartRequest(method, uri);
       if (_accessToken != null && _accessToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_accessToken';
       }

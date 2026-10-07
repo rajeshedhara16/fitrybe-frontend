@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
 import 'post_detail_screen.dart';
+import 'trybe_detail_screen.dart';
 import 'user_profile_screen.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
@@ -13,6 +14,7 @@ enum _NotifType {
   comment,
   followRequest,
   trybeInvite,
+  trybeEvent,
   cliqueInvite,
   achievement,
   liveActivity,
@@ -172,6 +174,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
         'COMMENT' => _NotifType.comment,
         'FOLLOW' => _NotifType.follow,
         'TRYBE_INVITE' => _NotifType.trybeInvite,
+        'TRYBE_EVENT' => _NotifType.trybeEvent,
         'ACHIEVEMENT' => _NotifType.achievement,
         'CLIQUE_INVITE' => _NotifType.cliqueInvite,
         'CLIQUE_START' => _NotifType.liveActivity,
@@ -309,19 +312,33 @@ class _NotificationsTabState extends State<NotificationsTab> {
   }
 
   /// Opens what the notification is about. Likes and comments land on the
-  /// post, and on the exact comment when the notification recorded one. Other
-  /// kinds keep their old behaviour of simply marking themselves read.
+  /// post, and on the exact comment when the notification recorded one. A new
+  /// Trybe event opens that Trybe's Events tab. Other kinds keep their old
+  /// behaviour of simply marking themselves read.
   Future<void> _open(_NotificationItem item) async {
     _markRead(item);
 
-    final postId = item.entityId;
+    final entityId = item.entityId;
+    if (entityId == null || entityId.isEmpty) return;
+
+    if (item.apiType == 'TRYBE_EVENT') {
+      HapticFeedback.selectionClick();
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TrybeDetailScreen(trybeId: entityId, title: '', initialTab: 2),
+        ),
+      );
+      return;
+    }
+
     final isAboutPost = item.apiType == 'LIKE' || item.apiType == 'COMMENT';
-    if (!isAboutPost || postId == null || postId.isEmpty) return;
+    if (!isAboutPost) return;
 
     HapticFeedback.selectionClick();
     await PostDetailScreen.openById(
       context,
-      postId,
+      entityId,
       focusCommentId: item.commentId,
       // An older comment notification has no comment id, so at least land on
       // the comments rather than the top of the post.
@@ -477,6 +494,8 @@ class _NotificationsTabState extends State<NotificationsTab> {
         return (icon: Icons.person_add_alt_1_rounded, color: const Color(0xFF81C784));
       case _NotifType.trybeInvite:
         return (icon: Icons.group_add_rounded, color: const Color(0xFFFFB300));
+      case _NotifType.trybeEvent:
+        return (icon: Icons.event_rounded, color: const Color(0xFF4DB6AC));
       case _NotifType.cliqueInvite:
         return (icon: Icons.bolt_rounded, color: const Color(0xFFFF5722));
       case _NotifType.achievement:

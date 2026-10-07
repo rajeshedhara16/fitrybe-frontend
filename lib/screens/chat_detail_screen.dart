@@ -9,6 +9,8 @@ import '../services/session_service.dart';
 import '../services/socket_service.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
+import 'user_profile_screen.dart';
+import 'trybe_detail_screen.dart';
 
 class ChatDetailScreen extends StatefulWidget {
   /// Server conversation id.
@@ -17,6 +19,8 @@ class ChatDetailScreen extends StatefulWidget {
   final String? avatar;
   final bool isTrybe;
   final bool isOnline;
+  final String? otherUserId;
+  final String? trybeId;
 
   const ChatDetailScreen({
     super.key,
@@ -25,6 +29,8 @@ class ChatDetailScreen extends StatefulWidget {
     this.avatar,
     this.isTrybe = false,
     this.isOnline = false,
+    this.otherUserId,
+    this.trybeId,
   });
 
   @override
@@ -353,6 +359,47 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _toast('That message could not be deleted.');
   }
 
+  String? _resolvedUserId() {
+    if (widget.otherUserId != null && widget.otherUserId!.trim().isNotEmpty) {
+      return widget.otherUserId!.trim();
+    }
+    for (final m in _messages) {
+      if (m['isMe'] != true &&
+          m['senderId'] != null &&
+          '${m['senderId']}'.trim().isNotEmpty) {
+        return '${m['senderId']}'.trim();
+      }
+    }
+    return null;
+  }
+
+  void _onHeaderTapped() {
+    HapticFeedback.lightImpact();
+    if (widget.isTrybe) {
+      if (widget.trybeId != null && widget.trybeId!.isNotEmpty) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TrybeDetailScreen(
+              trybeId: widget.trybeId,
+              title: widget.name,
+              imageUrl: widget.avatar,
+              memberCount: '',
+              category: '',
+              location: '',
+              isJoined: true,
+            ),
+          ),
+        );
+      }
+    } else {
+      final uid = _resolvedUserId();
+      if (uid != null && uid.isNotEmpty) {
+        UserProfileScreen.navigate(context, uid);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -365,38 +412,42 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Row(
-          children: [
-            UserAvatar(
-              url: widget.avatar,
-              fallbackName: widget.name,
-              radius: 18,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.name,
-                    style: GoogleFonts.hankenGrotesk(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                  if (widget.isTrybe)
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _onHeaderTapped,
+          child: Row(
+            children: [
+              UserAvatar(
+                url: widget.avatar,
+                fallbackName: widget.name,
+                radius: 18,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      'Trybe Group Chat',
+                      widget.name,
                       style: GoogleFonts.hankenGrotesk(
-                        color: Colors.white38,
-                        fontSize: 11,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
                       ),
                     ),
-                ],
+                    if (widget.isTrybe)
+                      Text(
+                        'Trybe Group Chat',
+                        style: GoogleFonts.hankenGrotesk(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       body: Column(
@@ -685,12 +736,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
               ),
 
             if (!isMe && widget.isTrybe) ...[
-              Text(
-                msg['senderName'] ?? '',
-                style: GoogleFonts.hankenGrotesk(
-                  color: Colors.white70,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
+              GestureDetector(
+                onTap: () {
+                  final senderId = msg['senderId'] as String?;
+                  if (senderId != null && senderId.isNotEmpty) {
+                    HapticFeedback.lightImpact();
+                    UserProfileScreen.navigate(context, senderId);
+                  }
+                },
+                child: Text(
+                  msg['senderName'] ?? '',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(height: 4),

@@ -26,7 +26,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   @override
   void initState() {
     super.initState();
-    AchievementBadgeArt.precache(AchievementData.badges.map((b) => b.id));
+    AchievementBadgeArt.precache(AchievementData.visibleBadges.map((b) => b.id));
     AchievementService().sync();
   }
 
@@ -227,7 +227,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                 ),
 
                 // Categories & Badge Grids
-                ...AchievementData.categories.map((category) {
+                ...AchievementData.visibleCategories.map((category) {
                   var catBadges = allBadges.where((b) => b.cat == category.id).toList();
                   if (_selectedFilter == 'unlocked') {
                     catBadges = catBadges.where((b) => b.unlocked).toList();
@@ -240,7 +240,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                   }
 
                   final catUnlocked = catBadges.where((b) => b.unlocked).length;
-                  final totalInCat = AchievementData.badges.where((b) => b.cat == category.id).length;
+                  final totalInCat = AchievementData.visibleBadges.where((b) => b.cat == category.id).length;
 
                   return SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),

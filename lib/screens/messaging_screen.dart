@@ -66,12 +66,24 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
     final senderName = '${last['senderName'] ?? ''}'.trim();
     final text = '${last['text'] ?? ''}';
 
+    final String? userId = raw['userId'] as String? ??
+        raw['otherUserId'] as String? ??
+        raw['recipientId'] as String? ??
+        raw['targetUserId'] as String? ??
+        (raw['otherUser'] is Map ? '${raw['otherUser']['id']}' : null) ??
+        (raw['recipient'] is Map ? '${raw['recipient']['id']}' : null) ??
+        (raw['participant'] is Map ? '${raw['participant']['id']}' : null);
+    final String? trybeId = raw['trybeId'] as String? ??
+        (raw['trybe'] is Map ? '${raw['trybe']['id']}' : null);
+
     return {
       'id': '${raw['id']}',
       'type': isTrybe ? 'trybe' : 'direct',
       'name': '${raw['title'] ?? (isTrybe ? 'Trybe chat' : 'Conversation')}',
       'sub': isTrybe ? '${raw['membersCount'] ?? 0} members' : 'Direct message',
       'avatar': ApiService.media(raw['avatarUrl'] as String?),
+      'userId': userId,
+      'trybeId': trybeId,
       // Group threads prefix the sender so you can tell who spoke.
       'lastMessage': text.isEmpty
           ? 'No messages yet'
@@ -110,6 +122,8 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
           avatar: chatData['avatar'] as String?,
           isTrybe: chatData['type'] == 'trybe',
           isOnline: chatData['isOnline'] ?? false,
+          otherUserId: chatData['userId'] as String?,
+          trybeId: chatData['trybeId'] as String?,
         ),
       ),
     );
@@ -319,6 +333,7 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                                         'name': display,
                                         'avatar': avatar,
                                         'type': 'direct',
+                                        'userId': user['id'] as String?,
                                       });
                                     },
                                   );
@@ -424,6 +439,7 @@ class _MessagingScreenState extends State<MessagingScreen> with SingleTickerProv
                                         'name': name,
                                         'avatar': avatar,
                                         'type': 'trybe',
+                                        'trybeId': trybe['id'] as String?,
                                       });
                                     },
                                   );

@@ -10,8 +10,7 @@ import '../services/health_service.dart';
 import '../services/api_service.dart';
 import '../services/units.dart';
 import '../services/achievement_service.dart';
-import '../services/calorie_estimator.dart';
-import '../services/location_tracker.dart';
+import '../services/live_session.dart';
 
 class RecordScreen extends StatefulWidget {
   static const routeName = '/RecordScreen';
@@ -50,28 +49,29 @@ class _RecordScreenState extends State<RecordScreen>
   }
 
   // ── Tracking state ──────────────────────────────────────────────────────────
-  bool _isRecording = false;
-  bool _isPaused = false;
+  /// The workout in progress lives in [LiveSession], so leaving this screen
+  /// does not stop the GPS or reset the clock.
+  LiveSession get _live => LiveSession();
 
-  // ── Stopwatch ────────────────────────────────────────────────────────────────
-  Timer? _stopwatchTimer;
-  int _elapsedSeconds = 0;
+  bool get _isRecording => _live.isActive && _live.mode == LiveMode.solo;
+  bool get _isPaused => _isRecording && _live.state.isPaused;
+  int get _elapsedSeconds => _isRecording ? _live.state.elapsedSeconds : 0;
 
   // ── Live metrics ─────────────────────────────────────────────────────────────
   /// Kilometres measured by the GPS, never derived from elapsed time.
-  double get _activeDistance => _tracker.distanceKm;
-  int _activeCalories = 0;
+  double get _activeDistance => _isRecording ? _live.state.distanceKm : 0;
+  int get _activeCalories => _isRecording ? _live.state.calories : 0;
 
   /// Last real reading from Health Connect / HealthKit. Zero means "no sensor
   /// data", and the UI shows `--` rather than inventing a number.
-  int _activeHeartRate = 0;
-
-  /// Owns GPS distance and the traced route for the workout in progress.
-  final LocationTracker _tracker = LocationTracker();
+  int get _activeHeartRate => _isRecording
+      ? _live.state.heartRate
+      : HealthService().healthNotifier.value.heartRate;
 
   /// Set when the athlete starts a GPS activity without usable location, so
   /// the distance tile can explain itself instead of sitting at 0.00.
-  String? _locationWarning;
+  String? get _locationWarning =>
+      _isRecording ? _live.state.locationWarning : null;
 
   /// The workout just finished, kept on screen so its numbers can be read and
   /// shared instead of vanishing the moment Stop is pressed.
@@ -91,7 +91,8 @@ class _RecordScreenState extends State<RecordScreen>
   void initState() {
     super.initState();
     HealthService().fetchTodayHealthData();
-    _activeHeartRate = HealthService().healthNotifier.value.heartRate;
+    _live.notifier.addListener(_onLiveChanged);
+    _live.isViewOpen = true;
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -101,33 +102,10 @@ class _RecordScreenState extends State<RecordScreen>
 
   @override
   void dispose() {
+    _live.notifier.removeListener(_onLiveChanged);
+    _live.isViewOpen = false;
     _pulseController.dispose();
-    _stopwatchTimer?.cancel();
-    _tracker.stop();
     super.dispose();
-  }
-
-  // ── Timer helpers ────────────────────────────────────────────────────────────
-  void _startTimer() {
-    _stopwatchTimer?.cancel();
-    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _isPaused) return;
-      setState(() {
-        _elapsedSeconds++;
-        _activeCalories = CalorieEstimator.estimate(
-          activity: _selectedActivityName,
-          elapsedSeconds: _elapsedSeconds,
-          distanceKm: _tracker.distanceKm,
-          tracksDistance: _isGpsActivity,
-        );
-        _activeHeartRate = HealthService().healthNotifier.value.heartRate;
-      });
-    });
-  }
-
-  void _stopTimer() {
-    _stopwatchTimer?.cancel();
-    _stopwatchTimer = null;
   }
 
   String _formatTime(int seconds) {
@@ -142,76 +120,68 @@ class _RecordScreenState extends State<RecordScreen>
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  /// Pace in the unit the athlete reads in. Distance is always tracked in
+  /// kilometres underneath.
   String _getPace() {
     if (_activeDistance < 0.005) return "-'--\"";
     final double minPerKm = (_elapsedSeconds / 60.0) / _activeDistance;
-    // Shown per mile when that is what the athlete reads in. The distance
-    // itself is still tracked in kilometres.
     final double perUnit = Units.paceFrom(minPerKm);
     final int min = perUnit.toInt();
     final int sec = ((perUnit - min) * 60).toInt();
     return "$min'${sec.toString().padLeft(2, '0')}\"";
   }
 
+  /// Redraws as the running workout reports its clock, distance and pace.
+  void _onLiveChanged() {
+    if (mounted) setState(() {});
+  }
+
   // ── Actions ──────────────────────────────────────────────────────────────────
   Future<void> _onStartPressed() async {
     HapticFeedback.heavyImpact();
-    _tracker.reset();
     setState(() {
-      _isRecording = true;
-      _isPaused = false;
-      _elapsedSeconds = 0;
-      _activeCalories = 0;
-      _activeHeartRate = HealthService().healthNotifier.value.heartRate;
-      _locationWarning = null;
       // A new workout replaces the last one's summary, which would otherwise
       // stay pinned over the live metrics.
       _finished = null;
       _isSavingFinished = false;
     });
-    _startTimer();
 
-    // Distance-based workouts need the GPS. If it is unavailable the workout
-    // still records its duration — it just honestly reports no distance.
-    if (_isGpsActivity) {
-      try {
-        await _tracker.start(onUpdate: () {
-          if (mounted) setState(() {});
-        });
-      } on LocationDeniedException catch (e) {
-        if (!mounted) return;
-        setState(() => _locationWarning = e.message);
-      } catch (e) {
-        debugPrint('GPS start error: $e');
-        if (!mounted) return;
-        setState(() =>
-            _locationWarning = 'Distance is unavailable — GPS could not start.');
-      }
-    }
+    // The session owns the clock and the GPS. A distance activity that cannot
+    // reach location still records its duration and says why.
+    await _live.start(
+      mode: LiveMode.solo,
+      activityType: _selectedActivityName,
+      title: _selectedActivityName,
+    );
+    if (mounted) setState(() {});
   }
 
   void _onPausePressed() {
     HapticFeedback.mediumImpact();
-    _tracker.isPaused = true;
-    setState(() => _isPaused = true);
+    if (!_isPaused) _live.togglePause();
+    if (mounted) setState(() {});
   }
 
   void _onResumePressed() {
     HapticFeedback.mediumImpact();
-    _tracker.isPaused = false;
-    setState(() => _isPaused = false);
+    if (_isPaused) _live.togglePause();
+    if (mounted) setState(() {});
   }
 
-  void _onStopPressed() {
+  Future<void> _onStopPressed() async {
     HapticFeedback.heavyImpact();
-    // Save only if there was meaningful activity (at least 3 seconds).
-    final shouldSave = _isRecording && _elapsedSeconds >= 3;
-    final durationSeconds = _elapsedSeconds;
-    final distanceKm = _isGpsActivity ? _tracker.distanceKm : 0.0;
-    final route = _isGpsActivity ? _tracker.routeAsJson() : const <Map<String, double>>[];
-    final calories = _activeCalories;
     final heartRate = _activeHeartRate;
-    _tracker.stop();
+
+    // Ends the workout and hands back what it measured.
+    final summary = await _live.finish();
+    // Save only if there was meaningful activity (at least 3 seconds).
+    final durationSeconds = summary?.elapsed.inSeconds ?? 0;
+    final shouldSave = summary != null && durationSeconds >= 3;
+    final distanceKm = _isGpsActivity ? (summary?.distanceKm ?? 0) : 0.0;
+    final route = _isGpsActivity
+        ? (summary?.route ?? const <Map<String, double>>[])
+        : const <Map<String, double>>[];
+    final calories = summary?.calories ?? 0;
 
     if (shouldSave) {
       _activityLogs.insert(
@@ -228,14 +198,7 @@ class _RecordScreenState extends State<RecordScreen>
       );
     }
 
-    _stopTimer();
     setState(() {
-      _isRecording = false;
-      _isPaused = false;
-      _elapsedSeconds = 0;
-      _activeCalories = 0;
-      _activeHeartRate = 0;
-      _locationWarning = null;
       // Hold the finished workout on screen rather than clearing it. The
       // athlete has just stopped and wants to see what they did — and decide
       // whether to share it.
@@ -251,7 +214,6 @@ class _RecordScreenState extends State<RecordScreen>
           : null;
       _isSavingFinished = shouldSave;
     });
-    _tracker.reset();
 
     if (shouldSave) {
       _persistActivity(

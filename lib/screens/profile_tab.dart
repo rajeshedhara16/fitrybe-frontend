@@ -15,6 +15,7 @@ import '../services/health_service.dart';
 import '../services/achievement_service.dart';
 import 'package:share_plus/share_plus.dart';
 import 'post_detail_screen.dart';
+import '../widgets/post_options_sheet.dart';
 
 
 class ProfileTab extends StatefulWidget {
@@ -30,8 +31,8 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   final Color _cardBg = const Color(0xFF1F1F22);
 
   // Post Likes state
-  final Set<String> _likedProfilePostIds = {};
-  final Map<String, int> _profilePostLikesCount = {};
+  /// Posts with a like or unlike still on its way to the server.
+  final Set<String> _likeBusy = {};
 
   late AnimationController _streakController;
 
@@ -40,6 +41,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
   List<Map<String, dynamic>> _myPosts = [];
   Map<String, dynamic> _otherUser = {};
   bool _isFollowing = false;
+  bool _blockedByMe = false;
   bool _isLoading = true;
 
   bool get _isOwnProfile =>
@@ -188,6 +190,7 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
           _otherUser = user;
           _stats = (profile['stats'] as Map?)?.cast<String, dynamic>() ?? const {};
           _isFollowing = profile['isFollowing'] == true;
+          _blockedByMe = profile['blockedByMe'] == true;
           _analytics = results[1] as Map<String, dynamic>;
           _myPosts = results[2] as List<Map<String, dynamic>>;
           _isLoading = false;
@@ -216,6 +219,112 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
     if (!success && mounted) {
       _load();
     }
+  }
+
+  /// Likes or unlikes a post on this profile. Shown straight away, saved to the
+  /// server, and put back if the server refuses. The like used to change only
+  /// on screen and vanish on the next refresh.
+  Future<void> _toggleProfilePostLike(Map<String, dynamic> post) async {
+    final postId = '${post['id'] ?? ''}';
+    if (postId.isEmpty || _likeBusy.contains(postId)) return;
+
+    HapticFeedback.lightImpact();
+    final wasLiked = post['likedByMe'] == true;
+    final count = (post['likeCount'] as num?)?.toInt() ?? 0;
+    setState(() {
+      _likeBusy.add(postId);
+      post['likedByMe'] = !wasLiked;
+      post['likeCount'] = wasLiked ? (count - 1).clamp(0, count) : count + 1;
+    });
+
+    final ok = await ApiService.setLiked(postId, !wasLiked);
+    if (!mounted) return;
+    setState(() {
+      _likeBusy.remove(postId);
+      if (!ok) {
+        post['likedByMe'] = wasLiked;
+        post['likeCount'] = count;
+      }
+    });
+  }
+
+  /// Blocks or unblocks this person. Blocking asks first; unblocking does not,
+  /// since it only undoes something the athlete chose.
+  Future<void> _toggleBlock() async {
+    final targetId = widget.userId;
+    if (targetId == null) return;
+    final blocking = !_blockedByMe;
+    if (blocking && !await PostOptions.confirmBlock(context, _displayName)) return;
+    if (!mounted) return;
+
+    HapticFeedback.mediumImpact();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ApiService.setBlocked(targetId, blocking);
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: _cardBg,
+        content: Text(
+          blocking ? '$_displayName is blocked.' : '$_displayName is unblocked.',
+          style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+        ),
+      ));
+      if (!mounted) return;
+      setState(() => _isLoading = true);
+      await _load();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        backgroundColor: _cardBg,
+        content: Text(
+          e is ApiException ? e.message : 'Could not update the block. Try again.',
+          style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+        ),
+      ));
+    }
+  }
+
+  void _showProfileMenu() {
+    HapticFeedback.mediumImpact();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1B1B1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  _blockedByMe ? Icons.lock_open_rounded : Icons.block_rounded,
+                  color: _blockedByMe ? Colors.white70 : Colors.redAccent,
+                ),
+                title: Text(
+                  _blockedByMe ? 'Unblock $_displayName' : 'Block $_displayName',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: _blockedByMe ? Colors.white : Colors.redAccent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _toggleBlock();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Formats large follower counts as "1.2k".
@@ -427,17 +536,17 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                       ] else ...[
                         Expanded(
                           child: GestureDetector(
-                            onTap: _toggleFollow,
+                            onTap: _blockedByMe ? _toggleBlock : _toggleFollow,
                             child: Container(
                               height: 40,
                               decoration: BoxDecoration(
-                                color: _isFollowing ? Colors.transparent : _accent,
+                                color: _isFollowing || _blockedByMe ? Colors.transparent : _accent,
                                 borderRadius: BorderRadius.circular(20),
-                                border: _isFollowing ? Border.all(color: Colors.white24) : null,
+                                border: _isFollowing || _blockedByMe ? Border.all(color: Colors.white24) : null,
                               ),
                               alignment: Alignment.center,
                               child: Text(
-                                _isFollowing ? 'Following' : 'Follow',
+                                _blockedByMe ? 'Unblock' : _isFollowing ? 'Following' : 'Follow',
                                 style: GoogleFonts.hankenGrotesk(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
@@ -483,8 +592,31 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                           ),
                         ),
                       ),
+                      if (!_isOwnProfile) ...[
+                        const SizedBox(width: 12),
+                        GestureDetector(
+                          onTap: _showProfileMenu,
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: const Icon(Icons.more_horiz_rounded, color: Colors.white70, size: 18),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
+                  if (_blockedByMe) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'You blocked $_displayName. You will not see each other\'s posts, and neither of you can follow or message the other.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 12.5, height: 1.4),
+                    ),
+                  ],
                   const SizedBox(height: 20),
 
                   // Divider
@@ -1322,23 +1454,14 @@ class _ProfileTabState extends State<ProfileTab> with SingleTickerProviderStateM
                 children: [
                   Builder(
                     builder: (context) {
-                      final isLiked = _likedProfilePostIds.contains(postId);
-                      final count = _profilePostLikesCount[postId] ?? 0;
+                      // Straight from the server's post, which the toggle
+                      // updates in place, so a refresh shows the same thing.
+                      final isLiked = post['likedByMe'] == true;
+                      final count = (post['likeCount'] as num?)?.toInt() ?? 0;
                       return _buildPostAction(
                         isLiked ? Icons.favorite_rounded : Icons.favorite_outline_rounded,
                         '$count',
-                        () {
-                          HapticFeedback.lightImpact();
-                          setState(() {
-                            if (isLiked) {
-                              _likedProfilePostIds.remove(postId);
-                              _profilePostLikesCount[postId] = (count - 1).clamp(0, 9999);
-                            } else {
-                              _likedProfilePostIds.add(postId);
-                              _profilePostLikesCount[postId] = count + 1;
-                            }
-                          });
-                        },
+                        () => _toggleProfilePostLike(post),
                         color: isLiked ? _accent : Colors.white60,
                       );
                     },

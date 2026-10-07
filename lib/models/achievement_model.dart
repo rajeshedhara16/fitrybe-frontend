@@ -159,6 +159,20 @@ class AchievementData {
     AchievementCategory(id: 'exploration', title: 'EXPLORATION', shape: BadgeShape.compass),
   ];
 
+  /// Challenges are not built yet, so their badges stay out of the closet: a
+  /// badge nobody can earn only makes the collection look unfinished, and it
+  /// would count against the unlocked total forever. The badges below are kept
+  /// as written — set this to true when challenges land and they all return.
+  static const bool challengesEnabled = false;
+
+  static List<AchievementCategory> get visibleCategories => categories
+      .where((c) => challengesEnabled || c.id != 'challenges')
+      .toList();
+
+  static List<AchievementBadge> get visibleBadges => badges
+      .where((b) => challengesEnabled || b.cat != 'challenges')
+      .toList();
+
   static const List<AchievementBadge> badges = [
     // ── ACTIVITY ─────────────────────────────────────────────────────────────
     AchievementBadge(

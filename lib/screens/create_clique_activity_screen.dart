@@ -53,8 +53,9 @@ class _CreateCliqueActivityScreenState
     {'label': 'Basketball', 'icon': Icons.sports_basketball_rounded},
   ];
 
-  final List<String> _goalTypes = ['Distance', 'Duration', 'Calories', 'Steps'];
-  final List<String> _goalUnits = ['km', 'min', 'kcal', 'steps'];
+  // Steps are not measured per session, so a steps goal could never fill in.
+  final List<String> _goalTypes = ['Distance', 'Duration', 'Calories'];
+  final List<String> _goalUnits = ['km', 'min', 'kcal'];
 
   /// Athletes chosen to invite when the session is created.
   final List<Map<String, dynamic>> _selectedMembers = [];
@@ -111,6 +112,7 @@ class _CreateCliqueActivityScreenState
         // The API tracks distance targets in kilometres.
         if (goalType == 'Distance') 'targetDistance': goalValue,
         if (goalType == 'Duration') 'targetDuration': (goalValue * 60).round(),
+        if (goalType == 'Calories') 'targetCalories': goalValue.round(),
       });
 
       final sessionId = session?['id'] as String?;

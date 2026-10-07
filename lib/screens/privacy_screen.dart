@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../services/api_service.dart';
 import '../services/session_service.dart';
+import 'blocked_accounts_screen.dart';
 
 /// Who sees what.
 ///
@@ -162,6 +163,28 @@ class _PrivacyScreenState extends State<PrivacyScreen> {
               _note(
                 'This controls search only. Someone who already follows you, or '
                 'who opens a link to your profile, can still see it.',
+              ),
+              const SizedBox(height: 24),
+              _sectionHeader('BLOCKING'),
+              const SizedBox(height: 10),
+              _card(
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  leading: const Icon(Icons.block_rounded, color: Colors.white70),
+                  title: Text(
+                    'Blocked accounts',
+                    style: GoogleFonts.hankenGrotesk(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14.5),
+                  ),
+                  subtitle: Text(
+                    'People you blocked cannot see your posts or contact you.',
+                    style: GoogleFonts.hankenGrotesk(color: Colors.white38, fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BlockedAccountsScreen()),
+                  ),
+                ),
               ),
               const SizedBox(height: 26),
               Container(

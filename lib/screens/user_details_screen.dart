@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'auth_screens.dart';
 import 'health_permission_screen.dart';
+import '../models/trybe_activity_options.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
 
@@ -11,14 +12,6 @@ class _PrefItem {
   final String label;
   final IconData icon;
   const _PrefItem(this.label, this.icon);
-}
-
-/// A named group of preferences, e.g. "Cardio" or "Team Sports".
-class _PrefGroup {
-  final String title;
-  final IconData icon;
-  final List<_PrefItem> items;
-  const _PrefGroup(this.title, this.icon, this.items);
 }
 
 class UserDetailsScreen extends StatefulWidget {
@@ -59,51 +52,9 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
   // ---- Preference page state -------------------------------------------
   final ScrollController _prefScrollController = ScrollController();
 
-  // ---- Preference data --------------------------------------------------
-
-  static const List<_PrefGroup> _activityGroups = [
-    _PrefGroup('Distance-Based Activities', Icons.route_rounded, [
-      _PrefItem('Walking', Icons.directions_walk_rounded),
-      _PrefItem('Running', Icons.directions_run_rounded),
-      _PrefItem('Hiking', Icons.hiking_rounded),
-      _PrefItem('Cycling', Icons.pedal_bike_rounded),
-      _PrefItem('Roller Skating', Icons.roller_skating_rounded),
-      _PrefItem('Skateboarding', Icons.skateboarding_rounded),
-      _PrefItem('Wheelchair Activity', Icons.accessible_forward_rounded),
-      _PrefItem('Dog Walking', Icons.pets_rounded),
-      _PrefItem('Open Water Swimming', Icons.pool_rounded),
-      _PrefItem('Kayaking', Icons.kayaking_rounded),
-      _PrefItem('Canoeing', Icons.rowing_rounded),
-      _PrefItem('Paddleboarding', Icons.waves_rounded),
-      _PrefItem('Skiing', Icons.downhill_skiing_rounded),
-      _PrefItem('Snowboarding', Icons.snowboarding_rounded),
-      _PrefItem('Nature Walk', Icons.nature_people_rounded),
-      _PrefItem('Commute Walk', Icons.transfer_within_a_station_rounded),
-      _PrefItem('Commute Ride', Icons.directions_bike_rounded),
-    ]),
-    _PrefGroup('Location-Based Activities', Icons.place_rounded, [
-      _PrefItem('Gym Workout', Icons.fitness_center_rounded),
-      _PrefItem('Football/Soccer', Icons.sports_soccer_rounded),
-      _PrefItem('Basketball', Icons.sports_basketball_rounded),
-      _PrefItem('Volleyball', Icons.sports_volleyball_rounded),
-      _PrefItem('Tennis', Icons.sports_tennis_rounded),
-      _PrefItem('Badminton', Icons.sports_tennis_rounded),
-      _PrefItem('Cricket', Icons.sports_cricket_rounded),
-      _PrefItem('Rugby', Icons.sports_rugby_rounded),
-      _PrefItem('Boxing', Icons.sports_mma_rounded),
-      _PrefItem('Martial Arts', Icons.sports_martial_arts_rounded),
-      _PrefItem('Yoga (Outdoor)', Icons.self_improvement_rounded),
-      _PrefItem('Calisthenics (Park)', Icons.accessibility_new_rounded),
-      _PrefItem('Rock Climbing', Icons.terrain_rounded),
-      _PrefItem('Golf', Icons.sports_golf_rounded),
-      _PrefItem('Disc Golf', Icons.adjust_rounded),
-      _PrefItem('Frisbee', Icons.album_rounded),
-    ]),
-  ];
-
-  /// Flat lists, kept so the rest of the app can still read plain names.
+  /// Flat list of all activity names available across the platform.
   List<String> get activityOptions =>
-      _activityGroups.expand((g) => g.items).map((i) => i.label).toList();
+      trybeActivityOptions.map((a) => a.name).toList();
 
   List<String> get sportsOption => [];
 
@@ -746,26 +697,10 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
   }
 
 
-  static const List<_PrefItem> _gridActivities = [
-    _PrefItem('Cycling', Icons.pedal_bike_rounded),
-    _PrefItem('Gym & Weightlifting', Icons.fitness_center_rounded),
-    _PrefItem('Swimming', Icons.pool_rounded),
-    _PrefItem('Yoga & Mobility', Icons.self_improvement_rounded),
-    _PrefItem('Hiking', Icons.hiking_rounded),
-    _PrefItem('Walking', Icons.directions_walk_rounded),
-    _PrefItem('Calisthenics', Icons.accessibility_new_rounded),
-    _PrefItem('Rock Climbing', Icons.terrain_rounded),
-    _PrefItem('Boxing', Icons.sports_mma_rounded),
-    _PrefItem('Football/Soccer', Icons.sports_soccer_rounded),
-    _PrefItem('Basketball', Icons.sports_basketball_rounded),
-    _PrefItem('Tennis', Icons.sports_tennis_rounded),
-    _PrefItem('Badminton', Icons.sports_tennis_rounded),
-    _PrefItem('Cricket', Icons.sports_cricket_rounded),
-    _PrefItem('Martial Arts', Icons.sports_martial_arts_rounded),
-    _PrefItem('Pilates', Icons.accessibility_rounded),
-    _PrefItem('Rowing', Icons.rowing_rounded),
-    _PrefItem('Golf', Icons.sports_golf_rounded),
-  ];
+  static List<_PrefItem> get _gridActivities => trybeActivityOptions
+      .where((a) => a.name != 'Running')
+      .map((a) => _PrefItem(a.name, a.icon))
+      .toList();
 
   Widget _buildFeaturedRunningCard() {
     final isSel = selectedActivities.contains('Running');
@@ -929,25 +864,35 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
         // 2. Featured Top Banner Card (Running)
         _buildFeaturedRunningCard(),
 
-        // 3. Grid of Activities with Scroller (non-scrollable page, scrollable grid)
+        // 3. Grid of Activities with Horizontal Scroller (8 boxes visible on one screen: 4 rows x 2 columns)
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: RawScrollbar(
-              controller: _prefScrollController,
-              thumbVisibility: true,
-              thickness: 3.5,
-              radius: const Radius.circular(3),
-              thumbColor: const Color(0xFF48484E),
-              child: GridView.builder(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              const int rows = 4;
+              const int colsOnScreen = 2; // 4 rows x 2 columns = 8 boxes visible on screen
+              const double mainAxisSpacing = 10;
+              const double crossAxisSpacing = 10;
+              const double hPadding = 20;
+              const double vPadding = 4;
+
+              final availableHeight = constraints.maxHeight - (vPadding * 2) - ((rows - 1) * crossAxisSpacing);
+              final rowHeight = (availableHeight / rows).clamp(50.0, 120.0);
+
+              final availableWidth = constraints.maxWidth - (hPadding * 2) - ((colsOnScreen - 1) * mainAxisSpacing);
+              final colWidth = (availableWidth / colsOnScreen).clamp(120.0, 260.0);
+
+              final childAspectRatio = rowHeight / colWidth;
+
+              return GridView.builder(
                 controller: _prefScrollController,
+                scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.only(top: 4, bottom: 8, right: 6),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1.22,
+                padding: const EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: rows,
+                  crossAxisSpacing: crossAxisSpacing,
+                  mainAxisSpacing: mainAxisSpacing,
+                  childAspectRatio: childAspectRatio,
                 ),
                 itemCount: _gridActivities.length,
                 itemBuilder: (context, index) {
@@ -957,12 +902,12 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
                     onTap: () => _togglePref(item.label),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 180),
-                      padding: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                       decoration: BoxDecoration(
                         color: isSel
                             ? _accent.withValues(alpha: 0.12)
                             : const Color(0xFF19191D),
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(16),
                         border: Border.all(
                           color: isSel
                               ? _accent
@@ -970,79 +915,122 @@ class _UserDetailsScreenState extends State<UserDetailsScreen> {
                           width: isSel ? 1.8 : 1.0,
                         ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      child: Stack(
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Icon(
-                                item.icon,
-                                color: isSel ? _accent : const Color(0xFFFF7A50),
-                                size: 24,
-                              ),
-                              if (isSel)
-                                const Icon(
-                                  Icons.check_circle_rounded,
-                                  color: _accent,
-                                  size: 18,
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  item.icon,
+                                  color: isSel ? _accent : const Color(0xFFFF7A50),
+                                  size: 28,
                                 ),
-                            ],
-                          ),
-                          Text(
-                            item.label,
-                            style: GoogleFonts.hankenGrotesk(
-                              color: Colors.white,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              height: 1.2,
+                                const SizedBox(height: 6),
+                                Text(
+                                  item.label,
+                                  textAlign: TextAlign.left,
+                                  style: GoogleFonts.hankenGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 14.0,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.15,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                             ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
                           ),
+                          if (isSel)
+                            const Positioned(
+                              top: 0,
+                              right: 0,
+                              child: Icon(
+                                Icons.check_circle_rounded,
+                                color: _accent,
+                                size: 16,
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   );
                 },
-              ),
-            ),
+              );
+            },
           ),
         ),
 
-        // 4. Counter matching screenshot: 0 SELECTED •••
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '${selectedActivities.length} SELECTED',
-                style: GoogleFonts.hankenGrotesk(
-                  color: selectedActivities.isNotEmpty
-                      ? _accent
-                      : const Color(0xFFA0A0A0),
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '• • •',
-                style: TextStyle(
-                  color: selectedActivities.isNotEmpty
-                      ? _accent
-                      : const Color(0xFF48484E),
-                  fontSize: 12,
-                  letterSpacing: 2,
-                ),
-              ),
-            ],
-          ),
-        ),
+        // 4. Fancy Glowing Scrollbar Indicator (replaces selected counter)
+        _buildFancyScrollbar(),
       ],
+    );
+  }
+
+  Widget _buildFancyScrollbar() {
+    return AnimatedBuilder(
+      animation: _prefScrollController,
+      builder: (context, child) {
+        double progress = 0.0;
+        if (_prefScrollController.hasClients &&
+            _prefScrollController.position.hasContentDimensions &&
+            _prefScrollController.position.maxScrollExtent > 0) {
+          progress = (_prefScrollController.offset /
+                  _prefScrollController.position.maxScrollExtent)
+              .clamp(0.0, 1.0);
+        }
+
+        const double trackWidth = 88.0;
+        const double trackHeight = 4.0;
+        const double thumbWidth = 28.0;
+        final double maxThumbOffset = trackWidth - thumbWidth;
+        final double currentThumbOffset = maxThumbOffset * progress;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Center(
+            child: Container(
+              width: trackWidth,
+              height: trackHeight,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(trackHeight / 2),
+              ),
+              child: Stack(
+                children: [
+                  Positioned(
+                    left: currentThumbOffset,
+                    top: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: thumbWidth,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [
+                            _accent,
+                            Color(0xFFFF8A65),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(trackHeight / 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _accent.withValues(alpha: 0.55),
+                            blurRadius: 6,
+                            spreadRadius: 0.5,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -37,6 +37,32 @@ class HealthDataSummary {
   int get workoutsCount => todayWorkoutsCount;
 }
 
+/// One workout as Apple Health or Health Connect recorded it.
+///
+/// [id] is the health store's own identifier, which is what lets the same
+/// workout be recognised on a later sync instead of filed twice.
+class HealthWorkout {
+  const HealthWorkout({
+    required this.id,
+    required this.typeName,
+    required this.start,
+    required this.end,
+    required this.distanceMetres,
+    required this.calories,
+    required this.sourceName,
+  });
+
+  final String id;
+  final String typeName;
+  final DateTime start;
+  final DateTime end;
+  final double distanceMetres;
+  final int calories;
+  final String sourceName;
+
+  Duration get duration => end.difference(start);
+}
+
 class HealthService {
   static final HealthService _instance = HealthService._internal();
   factory HealthService() => _instance;
@@ -87,6 +113,89 @@ class HealthService {
       debugPrint('HealthService permission error: $e');
       _isAuthorized = false;
       return false;
+    }
+  }
+
+  /// Asks for access if it has not been granted yet, without forcing the
+  /// system prompt when it already has.
+  Future<bool> ensureAuthorized() async {
+    if (kIsWeb) return true;
+    if (_isAuthorized) return true;
+    try {
+      final permissions = List.filled(_types.length, HealthDataAccess.READ);
+      final has = await _health.hasPermissions(_types, permissions: permissions);
+      if (has == true) {
+        _isAuthorized = true;
+        return true;
+      }
+    } catch (_) {
+      // Health Connect answers this inconsistently on some devices; fall
+      // through and ask outright.
+    }
+    return requestPermissions();
+  }
+
+  /// Workouts the watch or phone recorded between [since] and [until].
+  ///
+  /// Returns an empty list rather than throwing: a missing permission or a
+  /// health store that is not installed is a normal state, not an error the
+  /// athlete needs to see.
+  Future<List<HealthWorkout>> fetchWorkouts({
+    required DateTime since,
+    DateTime? until,
+  }) async {
+    if (kIsWeb) return const [];
+    final end = until ?? DateTime.now();
+    if (!since.isBefore(end)) return const [];
+    if (!await ensureAuthorized()) return const [];
+
+    try {
+      final points = await _health.getHealthDataFromTypes(
+        types: const [HealthDataType.WORKOUT],
+        startTime: since,
+        endTime: end,
+      );
+
+      final workouts = <HealthWorkout>[];
+      for (final point in points) {
+        final value = point.value;
+        if (value is! WorkoutHealthValue) continue;
+        workouts.add(HealthWorkout(
+          id: point.uuid,
+          typeName: value.workoutActivityType.name,
+          start: point.dateFrom,
+          end: point.dateTo,
+          distanceMetres: metresFrom(value.totalDistance, value.totalDistanceUnit?.name),
+          calories: value.totalEnergyBurned ?? 0,
+          sourceName: point.sourceName,
+        ));
+      }
+      workouts.sort((a, b) => a.start.compareTo(b.start));
+      return workouts;
+    } catch (e) {
+      debugPrint('HealthService fetchWorkouts error: $e');
+      return const [];
+    }
+  }
+
+  /// A distance from the health store in whatever unit it used, as metres.
+  /// The unit arrives as a name so an unfamiliar one falls back to metres
+  /// rather than failing to compile against a future package version.
+  static double metresFrom(int? value, String? unitName) {
+    if (value == null || value <= 0) return 0;
+    switch (unitName?.toUpperCase()) {
+      case 'KILOMETER':
+        return value * 1000.0;
+      case 'MILE':
+        return value * 1609.34;
+      case 'FOOT':
+        return value * 0.3048;
+      case 'YARD':
+        return value * 0.9144;
+      case 'INCH':
+        return value * 0.0254;
+      default:
+        return value.toDouble();
     }
   }
 

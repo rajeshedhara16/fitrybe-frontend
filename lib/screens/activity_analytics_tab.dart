@@ -151,6 +151,21 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
         final summary = _analyticsData?['summary'] as Map<String, dynamic>?;
         final int backendWorkouts = summary?['totalWorkouts'] ?? 0;
 
+        final List<dynamic> allActivities =
+            _analyticsData?['recentActivities'] ?? const [];
+        final now = DateTime.now();
+        final todayActivities = allActivities.where((a) {
+          if (a is! Map) return false;
+          final at = DateTime.tryParse('${a['createdAt'] ?? ''}')?.toLocal();
+          return at != null &&
+              at.year == now.year &&
+              at.month == now.month &&
+              at.day == now.day;
+        }).toList();
+        final int todayWorkouts = health.todayWorkoutsCount > 0
+            ? health.todayWorkoutsCount
+            : todayActivities.length;
+
         final String durationStr = health.activeMinutes >= 60
             ? '${(health.activeMinutes / 60).toStringAsFixed(1)}h'
             : '${health.activeMinutes}m';
@@ -163,8 +178,8 @@ class _ActivityAnalyticsTabState extends State<ActivityAnalyticsTab> {
           mainAxisSpacing: 12,
           childAspectRatio: 2.2,
           children: [
-            _buildSummaryCard('Daily Steps', '${health.steps}', ''),
-            _buildSummaryCard('Active Workouts', '$backendWorkouts', ''),
+            _buildSummaryCard('Activities', '$todayWorkouts', ''),
+            _buildSummaryCard('Total Workouts', '$backendWorkouts', ''),
             _buildSummaryCard('Active Time', durationStr, ''),
             _buildSummaryCard('Calories', '${health.calories}', ' kcal'),
             _buildSummaryCard('Distance',

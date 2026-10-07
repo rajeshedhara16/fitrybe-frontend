@@ -1,0 +1,1584 @@
+<title>Fitrybe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anybody:wght@700;900&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<style>
+  :root {
+    /* A single dark world, painted explicitly so it holds on any host ground. */
+    --carbon: #08090B;
+    --carbon-2: #0C0E12;
+    --surface: #121419;
+    --surface-2: #171A21;
+    --ink: #F4F7FA;
+    --ink-2: #C7D0DA;
+    --muted: #8B95A3;
+    --faint: #5C6675;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-soft: rgba(255, 255, 255, 0.055);
+    --ember: #FF5A1F;
+    --ember-2: #FF8A4C;
+    --ember-glow: rgba(255, 90, 31, 0.32);
+    --mint: #37E0A8;
+
+    --display: 'Anybody', 'Arial Narrow', Impact, sans-serif;
+    --body: 'Hanken Grotesk', 'Segoe UI', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+    --gutter: clamp(18px, 4vw, 56px);
+    --band: clamp(84px, 11vw, 168px);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--carbon);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.6;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Ambient light behind everything, so flat black never reads as flat. */
+  .ambience {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(60vw 48vw at 78% -6%, rgba(255, 90, 31, 0.16), transparent 62%),
+      radial-gradient(44vw 40vw at 6% 28%, rgba(55, 224, 168, 0.07), transparent 60%),
+      radial-gradient(70vw 60vw at 50% 118%, rgba(255, 90, 31, 0.10), transparent 64%);
+  }
+
+  #scene {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1.2s ease 0.2s;
+  }
+  #scene.ready { opacity: 1; }
+
+  .page { position: relative; z-index: 2; }
+
+  .wrap {
+    width: 100%;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding-inline: var(--gutter);
+  }
+
+  h1, h2, h3, .display {
+    font-family: var(--display);
+    font-weight: 900;
+    letter-spacing: -0.035em;
+    line-height: 0.98;
+    text-wrap: balance;
+    margin: 0;
+  }
+  h2 { font-size: clamp(34px, 5.4vw, 68px); }
+  h3 { font-size: clamp(18px, 1.8vw, 21px); letter-spacing: -0.015em; line-height: 1.2; }
+  p { margin: 0; }
+  a { color: inherit; }
+
+  .shine {
+    background: linear-gradient(96deg, var(--ember) 8%, var(--ember-2) 48%, #FFD9C4 92%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .eyebrow::before {
+    content: "";
+    width: 26px;
+    height: 1px;
+    background: linear-gradient(90deg, var(--ember), transparent);
+  }
+
+  .lede {
+    font-size: clamp(16px, 1.45vw, 19px);
+    color: var(--ink-2);
+    max-width: 60ch;
+  }
+  .muted { color: var(--muted); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ── Scroll progress + nav ───────────────────────────────── */
+  .progress {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 0;
+    height: 2px;
+    width: 100%;
+    z-index: 60;
+    background: transparent;
+  }
+  .progress span {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--ember), var(--ember-2));
+    box-shadow: 0 0 16px var(--ember-glow);
+  }
+
+  .topbar {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 50;
+    transition: background .4s ease, border-color .4s ease, backdrop-filter .4s ease;
+    border-bottom: 1px solid transparent;
+  }
+  .topbar.is-stuck {
+    background: rgba(8, 9, 11, 0.72);
+    backdrop-filter: blur(18px) saturate(140%);
+    border-bottom-color: var(--line-soft);
+  }
+  .topbar-inner { display: flex; align-items: center; gap: 20px; min-height: 68px; }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--display);
+    font-weight: 900;
+    font-size: 19px;
+    letter-spacing: -0.045em;
+    text-decoration: none;
+    margin-right: auto;
+  }
+  .brand-mark {
+    width: 24px; height: 24px; flex: none;
+    border-radius: 8px;
+    background: linear-gradient(140deg, var(--ember), #C2340B);
+    box-shadow: 0 6px 18px -8px var(--ember-glow);
+    position: relative;
+  }
+  .brand-mark::after {
+    content: "";
+    position: absolute;
+    inset: 7px 6px;
+    border-left: 2.5px solid #fff;
+    border-bottom: 2.5px solid #fff;
+    border-bottom-left-radius: 3px;
+  }
+
+  .navlinks { display: flex; gap: 26px; }
+  .navlinks a {
+    position: relative;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color .25s ease;
+  }
+  .navlinks a::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: -6px;
+    width: 100%; height: 1px;
+    background: var(--ember);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform .3s cubic-bezier(.22,.61,.36,1);
+  }
+  .navlinks a:hover { color: var(--ink); }
+  .navlinks a:hover::after { transform: scaleX(1); }
+  @media (max-width: 880px) { .navlinks { display: none; } }
+
+  .unit-toggle {
+    display: inline-flex;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    flex: none;
+  }
+  .unit-toggle button {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 13px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background .3s ease, color .3s ease, box-shadow .3s ease;
+  }
+  .unit-toggle button[aria-pressed="true"] {
+    background: linear-gradient(140deg, var(--ember), #D83E0F);
+    color: #fff;
+    box-shadow: 0 6px 18px -10px var(--ember-glow);
+  }
+
+  /* ── Buttons ────────────────────────────────────────────── */
+  .btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 14px 24px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: linear-gradient(140deg, var(--ember), #D8400F);
+    color: #fff;
+    font-size: 14.5px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform .3s cubic-bezier(.22,.61,.36,1), box-shadow .3s ease;
+    box-shadow: 0 16px 36px -22px var(--ember-glow);
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 22px 44px -20px var(--ember-glow); }
+  .btn.ghost {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--line);
+    color: var(--ink);
+    box-shadow: none;
+  }
+  .btn.ghost:hover { border-color: rgba(255, 255, 255, 0.24); background: rgba(255, 255, 255, 0.07); }
+
+  /* ── Hero ───────────────────────────────────────────────── */
+  .hero {
+    position: relative;
+    padding-block: clamp(56px, 9vw, 108px) clamp(60px, 8vw, 110px);
+  }
+  .hero-inner { display: grid; gap: clamp(26px, 4vw, 44px); }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 15px 7px 11px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    backdrop-filter: blur(10px);
+    font-size: 13px;
+    color: var(--ink-2);
+    width: fit-content;
+  }
+  .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--mint);
+    box-shadow: 0 0 0 0 rgba(55, 224, 168, 0.55);
+    animation: pulse 2.8s ease-out infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(55, 224, 168, 0.5); }
+    70% { box-shadow: 0 0 0 10px rgba(55, 224, 168, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(55, 224, 168, 0); }
+  }
+
+  .hero h1 {
+    font-size: clamp(50px, 10.5vw, 136px);
+    max-width: 14ch;
+  }
+  .hero-sub { display: grid; gap: 26px; max-width: 54ch; }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+  .hero-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 1px;
+    margin-top: clamp(30px, 5vw, 56px);
+    background: var(--line-soft);
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    overflow: hidden;
+  }
+  .metric {
+    background: rgba(10, 12, 15, 0.72);
+    backdrop-filter: blur(14px);
+    padding: 20px 22px;
+  }
+  .metric .v {
+    display: block;
+    font-family: var(--display);
+    font-weight: 900;
+    font-size: clamp(26px, 3vw, 36px);
+    letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
+  }
+  .metric .k {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 2px;
+    display: block;
+  }
+
+  .scroll-cue {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: clamp(28px, 4vw, 46px);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .scroll-cue i {
+    width: 22px; height: 34px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    position: relative;
+  }
+  .scroll-cue i::after {
+    content: "";
+    position: absolute;
+    left: 50%; top: 7px;
+    width: 3px; height: 7px;
+    margin-left: -1.5px;
+    border-radius: 2px;
+    background: var(--ember);
+    animation: cue 2.2s ease-in-out infinite;
+  }
+  @keyframes cue {
+    0%, 100% { transform: translateY(0); opacity: 1; }
+    60% { transform: translateY(11px); opacity: 0.2; }
+  }
+
+  /* ── Marquee ────────────────────────────────────────────── */
+  .marquee {
+    position: relative;
+    border-block: 1px solid var(--line-soft);
+    padding-block: 18px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.015);
+    mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+  }
+  .marquee-track {
+    display: flex;
+    gap: 42px;
+    width: max-content;
+    animation: slide 46s linear infinite;
+  }
+  .marquee:hover .marquee-track { animation-play-state: paused; }
+  @keyframes slide { to { transform: translateX(-50%); } }
+  .marquee span {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 42px;
+  }
+  .marquee span::after {
+    content: "";
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--ember);
+    opacity: 0.55;
+  }
+
+  /* ── Sections ───────────────────────────────────────────── */
+  section { position: relative; padding-block: var(--band); }
+  .sec-head { max-width: 64ch; display: grid; gap: 16px; margin-bottom: clamp(32px, 5vw, 64px); }
+
+  .glass {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015));
+    backdrop-filter: blur(16px);
+    overflow: hidden;
+  }
+  .glass::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgba(255, 90, 31, 0.14), transparent 62%);
+    opacity: 0;
+    transition: opacity .45s ease;
+    pointer-events: none;
+  }
+  .glass:hover::before { opacity: 1; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(262px, 1fr));
+    gap: 16px;
+  }
+  .card { padding: 26px; display: grid; gap: 12px; align-content: start; }
+  .card .ico {
+    width: 40px; height: 40px;
+    display: grid; place-items: center;
+    border-radius: 13px;
+    background: rgba(255, 90, 31, 0.12);
+    border: 1px solid rgba(255, 90, 31, 0.22);
+    color: var(--ember);
+  }
+  .card p { color: var(--muted); font-size: 14.5px; }
+
+  /* ── Pinned showcase ────────────────────────────────────── */
+  .showcase-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+    gap: clamp(28px, 6vw, 80px);
+    align-items: start;
+  }
+  .steps { display: grid; gap: clamp(50px, 14vh, 130px); padding-block: 8vh 14vh; }
+  .step { display: grid; gap: 14px; max-width: 46ch; }
+  .step-index {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.2em;
+    color: var(--faint);
+  }
+  .step h3 { font-size: clamp(24px, 3.2vw, 38px); font-family: var(--display); font-weight: 900; letter-spacing: -0.03em; }
+  .step p { color: var(--muted); font-size: 15.5px; }
+  .step-marks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .mark {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 6px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .step.is-active .mark { border-color: rgba(255, 90, 31, 0.4); color: var(--ink-2); }
+  .step { opacity: .34; transition: opacity .5s ease; }
+  .step.is-active { opacity: 1; }
+
+  .phone-rail {
+    position: sticky;
+    top: clamp(84px, 16vh, 150px);
+    display: grid;
+    justify-items: center;
+    gap: 14px;
+  }
+
+  .phone {
+    position: relative;
+    width: min(330px, 78vw);
+    aspect-ratio: 330 / 672;
+    border-radius: 44px;
+    padding: 11px;
+    background: linear-gradient(160deg, #23262D, #0C0E12 46%, #1A1D23);
+    box-shadow:
+      0 50px 90px -40px rgba(0, 0, 0, 0.9),
+      0 0 0 1px rgba(255, 255, 255, 0.07),
+      inset 0 1px 1px rgba(255, 255, 255, 0.14);
+    transform: perspective(1400px) rotateY(var(--ry, -11deg)) rotateX(var(--rx, 3deg));
+    transition: transform .9s cubic-bezier(.22,.61,.36,1);
+    will-change: transform;
+  }
+  .phone::after {
+    content: "";
+    position: absolute;
+    inset: 11px;
+    border-radius: 34px;
+    pointer-events: none;
+    background: linear-gradient(142deg, rgba(255, 255, 255, 0.16), transparent 34%, transparent 72%, rgba(255, 255, 255, 0.07));
+    z-index: 4;
+  }
+  .phone-screen {
+    position: relative;
+    height: 100%;
+    border-radius: 34px;
+    overflow: hidden;
+    background: #0A0C10;
+  }
+  .notch {
+    position: absolute;
+    top: 9px; left: 50%;
+    transform: translateX(-50%);
+    width: 86px; height: 22px;
+    border-radius: 999px;
+    background: #05060800;
+    z-index: 3;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
+    backdrop-filter: blur(2px);
+  }
+
+  .screen {
+    position: absolute;
+    inset: 0;
+    padding: 40px 15px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    opacity: 0;
+    transform: translateY(16px) scale(.985);
+    transition: opacity .55s cubic-bezier(.22,.61,.36,1), transform .55s cubic-bezier(.22,.61,.36,1);
+  }
+  .screen[data-active="true"] { opacity: 1; transform: none; }
+
+  .statusbar {
+    position: absolute;
+    top: 13px; left: 18px; right: 18px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: rgba(255, 255, 255, 0.55);
+    z-index: 2;
+  }
+
+  .s-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .s-title { font-family: var(--display); font-weight: 900; font-size: 17px; letter-spacing: -0.03em; }
+  .s-sub { font-size: 11px; color: #7C8795; }
+
+  .p-card {
+    background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.02));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 17px;
+    padding: 12px;
+  }
+  .p-row { display: flex; align-items: center; gap: 9px; }
+  .avatar {
+    width: 29px; height: 29px; border-radius: 50%; flex: none;
+    background: linear-gradient(140deg, #FF8A4C, #D8400F);
+  }
+  .avatar.b { background: linear-gradient(140deg, #37E0A8, #0E8F67); }
+  .avatar.c { background: linear-gradient(140deg, #7AA7FF, #2D55B8); }
+  .p-name { font-size: 12.5px; font-weight: 600; }
+  .p-meta { font-size: 10px; color: #727D8B; }
+  .p-cap { font-size: 12px; color: #B6C0CC; margin-top: 9px; line-height: 1.45; }
+  .p-stats { display: flex; gap: 13px; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: #C7D0DA; }
+  .p-stats span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot-ember { width: 5px; height: 5px; border-radius: 50%; background: var(--ember); }
+
+  .p-tag {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(255, 90, 31, 0.16);
+    color: var(--ember-2);
+    white-space: nowrap;
+  }
+  .p-tag.live { background: rgba(55, 224, 168, 0.14); color: var(--mint); }
+
+  .p-shot {
+    height: 86px;
+    border-radius: 13px;
+    margin-top: 10px;
+    background:
+      radial-gradient(70% 120% at 20% 10%, rgba(255,138,76,.5), transparent 60%),
+      linear-gradient(140deg, #22262E, #121419);
+    position: relative;
+    overflow: hidden;
+  }
+  .p-shot::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(115deg, rgba(255,255,255,.05) 0 2px, transparent 2px 13px);
+  }
+
+  .goal-bar { height: 7px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 10px; }
+  .goal-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--ember), var(--ember-2));
+    width: 0;
+    transition: width 1.4s cubic-bezier(.22,.61,.36,1);
+  }
+  .screen[data-active="true"] .goal-fill { width: var(--w, 62%); }
+
+  .lb-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.055); }
+  .lb-row:last-child { border-bottom: 0; }
+  .lb-rank { font-family: var(--mono); font-size: 11px; color: #727D8B; width: 14px; }
+  .lb-name { font-size: 12px; font-weight: 500; flex: 1; }
+  .lb-val { font-family: var(--mono); font-size: 11px; color: #C7D0DA; }
+  .lb-row.me .lb-name, .lb-row.me .lb-val { color: var(--ember-2); }
+
+  .heat { display: grid; grid-template-columns: repeat(19, 1fr); gap: 2.5px; margin-top: 8px; }
+  .heat i { aspect-ratio: 1; border-radius: 2px; background: rgba(255,255,255,.055); display: block; }
+  .heat i[data-l="1"] { background: rgba(255, 90, 31, .3); }
+  .heat i[data-l="2"] { background: rgba(255, 90, 31, .55); }
+  .heat i[data-l="3"] { background: rgba(255, 90, 31, .78); }
+  .heat i[data-l="4"] { background: var(--ember); box-shadow: 0 0 8px -2px var(--ember-glow); }
+
+  .rings { display: grid; place-items: center; padding-block: 6px; }
+  .rec-timer { font-family: var(--mono); font-size: 32px; font-weight: 500; letter-spacing: -0.02em; }
+  .rec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .rec-cell { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); border-radius: 13px; padding: 9px 11px; }
+  .rec-cell .k { font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: #727D8B; font-family: var(--mono); }
+  .rec-cell .v { font-family: var(--mono); font-size: 16px; }
+  .rec-btn {
+    margin-top: auto;
+    height: 44px;
+    border-radius: 999px;
+    background: linear-gradient(140deg, var(--ember), #D8400F);
+    color: #fff;
+    font-weight: 600;
+    font-size: 13.5px;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 14px 30px -18px var(--ember-glow);
+  }
+
+  .tabbar {
+    position: absolute;
+    left: 15px; right: 15px; bottom: 12px;
+    height: 46px;
+    border-radius: 999px;
+    background: rgba(18, 20, 25, 0.86);
+    border: 1px solid rgba(255,255,255,.07);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    z-index: 2;
+  }
+  .tabbar i {
+    width: 16px; height: 16px;
+    border-radius: 5px;
+    background: rgba(255,255,255,.2);
+    display: block;
+  }
+  .tabbar i.on { background: var(--ember); box-shadow: 0 0 14px -2px var(--ember-glow); }
+
+  .route-mini { display: block; width: 100%; height: auto; }
+  .route-mini path.trace {
+    fill: none;
+    stroke: var(--ember);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 520;
+    stroke-dashoffset: 520;
+  }
+  .screen[data-active="true"] .route-mini path.trace {
+    animation: draw 2.4s cubic-bezier(.22,.61,.36,1) forwards;
+  }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  .caption { font-size: 12px; color: var(--faint); text-align: center; }
+
+  /* ── Leaderboard feature ────────────────────────────────── */
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(26px, 5vw, 70px);
+    align-items: center;
+  }
+  @media (max-width: 940px) { .split { grid-template-columns: 1fr; } }
+
+  .board { padding: 24px; display: grid; gap: 14px; }
+  .board-row { display: grid; grid-template-columns: 26px 1fr auto; gap: 14px; align-items: center; }
+  .board-row .nm { font-size: 14.5px; font-weight: 500; }
+  .board-row .rk { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  .board-row .vl { font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+  .board-bar { grid-column: 1 / -1; height: 5px; border-radius: 99px; background: rgba(255,255,255,.06); overflow: hidden; margin-top: -6px; }
+  .board-bar span {
+    display: block; height: 100%; border-radius: 99px;
+    background: linear-gradient(90deg, rgba(255,90,31,.5), var(--ember));
+    width: 0;
+    transition: width 1.2s cubic-bezier(.22,.61,.36,1);
+  }
+  .board.revealed .board-bar span, .board.is-seen .board-bar span { width: var(--w); }
+
+  .tick { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+  .tick li { display: grid; grid-template-columns: 22px 1fr; gap: 13px; align-items: start; font-size: 15px; color: var(--ink-2); }
+  .tick svg { margin-top: 4px; color: var(--ember); }
+  .tick b { font-weight: 600; color: var(--ink); }
+
+  /* ── Devices ────────────────────────────────────────────── */
+  .brand-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .brand-pill {
+    padding: 9px 16px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,.03);
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+
+  /* ── FAQ ────────────────────────────────────────────────── */
+  .faq { display: grid; gap: 10px; max-width: 880px; }
+  details {
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: rgba(255,255,255,.025);
+    overflow: hidden;
+    transition: border-color .3s ease, background .3s ease;
+  }
+  details[open] { border-color: rgba(255,90,31,.34); background: rgba(255,90,31,.045); }
+  summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 18px 20px;
+    font-weight: 600;
+    font-size: 15.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "";
+    width: 9px; height: 9px;
+    flex: none;
+    border-right: 1.6px solid var(--muted);
+    border-bottom: 1.6px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform .35s cubic-bezier(.22,.61,.36,1);
+  }
+  details[open] summary::after { transform: rotate(-135deg); }
+  .faq-body { padding: 0 20px 20px; color: var(--muted); font-size: 14.5px; max-width: 70ch; }
+
+  /* ── Closing ────────────────────────────────────────────── */
+  .closing { text-align: center; display: grid; gap: 24px; justify-items: center; }
+  .closing h2 { font-size: clamp(38px, 7vw, 92px); max-width: 16ch; }
+
+  footer { border-top: 1px solid var(--line-soft); padding-block: 42px 56px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; align-items: flex-start; }
+  .foot-links { display: flex; flex-wrap: wrap; gap: 10px 26px; }
+  .foot-links a { font-size: 14px; color: var(--muted); text-decoration: none; transition: color .25s ease; }
+  .foot-links a:hover { color: var(--ink); }
+
+  /* ── Reveal ─────────────────────────────────────────────── */
+  .will-reveal { opacity: 0; transform: translateY(26px); }
+  .revealed { opacity: 1; transform: none; transition: opacity .8s cubic-bezier(.22,.61,.36,1), transform .8s cubic-bezier(.22,.61,.36,1); }
+
+  :focus-visible { outline: 2px solid var(--ember); outline-offset: 4px; border-radius: 8px; }
+
+  @media (max-width: 940px) {
+    .showcase-grid { grid-template-columns: 1fr; }
+    .phone-rail { position: sticky; top: 76px; order: -1; }
+    .phone { width: min(258px, 62vw); }
+    .steps { padding-block: 4vh 6vh; gap: 56px; }
+    .phone { transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+    .will-reveal { opacity: 1; transform: none; }
+    .route-mini path.trace { stroke-dashoffset: 0; }
+    .step { opacity: 1; }
+  }
+</style>
+
+<div class="ambience" aria-hidden="true"></div>
+<canvas id="scene" aria-hidden="true"></canvas>
+
+<div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+
+<div class="page">
+  <header class="topbar" id="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span>Fitrybe</a>
+      <nav class="navlinks" aria-label="Sections">
+        <a href="#tour">Tour</a>
+        <a href="#trybes">Trybes</a>
+        <a href="#progress">Progress</a>
+        <a href="#devices">Devices</a>
+        <a href="#safety">Privacy</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="unit-toggle" role="group" aria-label="Distance units">
+        <button type="button" id="unit-km" aria-pressed="true">km</button>
+        <button type="button" id="unit-mi" aria-pressed="false">mi</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ── Hero ───────────────────────────────────────────── -->
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <span class="chip"><span class="pulse" aria-hidden="true"></span>In development · iOS and Android</span>
+        <h1>Train together, <span class="shine">wherever</span> you are.</h1>
+        <div class="hero-sub">
+          <p class="lede">Fitrybe records your run, ride or walk, then puts it where your people are: a club with a weekly goal, a live session you can join from another city, a feed only your Trybe sees.</p>
+          <div class="hero-actions">
+            <a class="btn" href="#tour">Take the tour</a>
+            <a class="btn ghost" href="#devices">Works with your watch</a>
+          </div>
+        </div>
+
+        <div class="hero-metrics">
+          <div class="metric">
+            <span class="v" data-count="34">34</span>
+            <span class="k">activity types</span>
+          </div>
+          <div class="metric">
+            <span class="v" data-count="7">7</span>
+            <span class="k">badge categories</span>
+          </div>
+          <div class="metric">
+            <span class="v">Live</span>
+            <span class="k">group sessions</span>
+          </div>
+          <div class="metric">
+            <span class="v">0</span>
+            <span class="k">ads, ever</span>
+          </div>
+        </div>
+
+        <span class="scroll-cue"><i aria-hidden="true"></i>Scroll</span>
+      </div>
+    </section>
+
+    <!-- ── Marquee ────────────────────────────────────────── -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track" id="marquee"></div>
+    </div>
+
+    <!-- ── Pinned tour ────────────────────────────────────── -->
+    <section id="tour">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">The tour</span>
+          <h2>Four screens, one habit</h2>
+          <p class="lede">Record it, share it with the people who care, watch the week fill in. Scroll and the phone follows.</p>
+        </div>
+
+        <div class="showcase-grid">
+          <div class="steps">
+            <article class="step is-active" data-screen="record">
+              <span class="step-index">01 / RECORD</span>
+              <h3>Press start. Everything else is automatic.</h3>
+              <p>Pace, distance, climb and calories update as you move, and the route is kept with the workout. Thirty-four activities are built in, from a commute ride to a paddleboard or a wheelchair session.</p>
+              <div class="step-marks"><span class="mark">GPS trace</span><span class="mark">Live pace</span><span class="mark">Auto-pause ready</span></div>
+            </article>
+
+            <article class="step" data-screen="feed">
+              <span class="step-index">02 / SHARE</span>
+              <h3>A feed without strangers in it.</h3>
+              <p>Post to everyone, or only to a Trybe, where it never leaves the group. Photos, comments and kudos, with hide, report and block on every post that isn't yours.</p>
+              <div class="step-marks"><span class="mark">Per-post audience</span><span class="mark">Trybe-only posts</span><span class="mark">Real moderation</span></div>
+            </article>
+
+            <article class="step" data-screen="trybe">
+              <span class="step-index">03 / TRYBE</span>
+              <h3>A club that runs itself.</h3>
+              <p>Set one weekly distance for the whole group and every member's workouts count toward it. Captains schedule events, members RSVP, the leaderboard reorders itself.</p>
+              <div class="step-marks"><span class="mark">Weekly goal</span><span class="mark">Week · month · all time</span><span class="mark">Events and RSVP</span></div>
+            </article>
+
+            <article class="step" data-screen="progress">
+              <span class="step-index">04 / PROGRESS</span>
+              <h3>Two years of proof.</h3>
+              <p>A heatmap shaded by how long you trained, a calendar that darkens as a day gets busier, streaks that survive a rest day, and badges across seven categories.</p>
+              <div class="step-marks"><span class="mark">Year and month views</span><span class="mark">Streaks</span><span class="mark">Personal bests</span></div>
+            </article>
+          </div>
+
+          <div class="phone-rail">
+            <div class="phone" id="phone">
+              <div class="phone-screen">
+                <div class="notch" aria-hidden="true"></div>
+                <div class="statusbar" aria-hidden="true"><span>9:41</span><span>5G ▮</span></div>
+
+                <!-- Record -->
+                <div class="screen" id="screen-record" data-active="true">
+                  <div class="s-top">
+                    <div>
+                      <div class="s-title">Recording</div>
+                      <div class="s-sub">Outdoor run · GPS locked</div>
+                    </div>
+                    <span class="p-tag live">Live</span>
+                  </div>
+                  <div class="p-card" style="text-align:center;">
+                    <div class="s-sub">Moving time</div>
+                    <div class="rec-timer">32:08</div>
+                    <svg class="route-mini" viewBox="0 0 280 96" role="img" aria-label="Route traced so far">
+                      <path class="trace" d="M14 78 C 44 44, 66 86, 96 56 C 126 26, 142 70, 172 52 C 202 34, 220 68, 266 30" />
+                    </svg>
+                  </div>
+                  <div class="rec-grid">
+                    <div class="rec-cell"><div class="k">Distance</div><div class="v"><span class="dist" data-km="6.1">6.1</span> <span class="u-dist">km</span></div></div>
+                    <div class="rec-cell"><div class="k">Pace</div><div class="v"><span class="pace" data-sec-per-km="316">5:16</span></div></div>
+                    <div class="rec-cell"><div class="k">Climb</div><div class="v">86 m</div></div>
+                    <div class="rec-cell"><div class="k">Calories</div><div class="v">381</div></div>
+                  </div>
+                  <div class="rec-btn">Finish and share</div>
+                </div>
+
+                <!-- Feed -->
+                <div class="screen" id="screen-feed" data-active="false">
+                  <div class="s-top">
+                    <div class="s-title">Feed</div>
+                    <div class="s-sub">Today</div>
+                  </div>
+                  <div class="p-card">
+                    <div class="p-row">
+                      <span class="avatar" aria-hidden="true"></span>
+                      <div>
+                        <div class="p-name">Priya Raman</div>
+                        <div class="p-meta">2h ago · In Sunrise Runners</div>
+                      </div>
+                    </div>
+                    <p class="p-cap">Beat the heat with a 6am loop. Legs finally feel fresh again.</p>
+                    <div class="p-shot" aria-hidden="true"></div>
+                    <div class="p-stats">
+                      <span><i class="dot-ember" aria-hidden="true"></i><span class="dist" data-km="8.2">8.2</span> <span class="u-dist">km</span></span>
+                      <span><span class="pace" data-sec-per-km="342">5:42</span> <span class="u-pace">/km</span></span>
+                      <span>412 kcal</span>
+                    </div>
+                  </div>
+                  <div class="p-card">
+                    <div class="p-row">
+                      <span class="avatar b" aria-hidden="true"></span>
+                      <div>
+                        <div class="p-name">Marcus Hale</div>
+                        <div class="p-meta">Yesterday · Everyone</div>
+                      </div>
+                    </div>
+                    <p class="p-cap">First ride since the ankle. Slow, but back on the bike.</p>
+                  </div>
+                </div>
+
+                <!-- Trybe -->
+                <div class="screen" id="screen-trybe" data-active="false">
+                  <div class="s-top">
+                    <div>
+                      <div class="s-title">Sunrise Runners</div>
+                      <div class="s-sub">42 members · Public</div>
+                    </div>
+                    <span class="p-tag">Captain</span>
+                  </div>
+                  <div class="p-card">
+                    <div class="p-row" style="justify-content: space-between;">
+                      <div class="s-sub">Weekly goal</div>
+                      <div class="p-name"><span class="dist" data-km="62">62</span> / <span class="dist" data-km="100">100</span> <span class="u-dist">km</span></div>
+                    </div>
+                    <div class="goal-bar"><span class="goal-fill" style="--w:62%;"></span></div>
+                    <div class="s-sub" style="margin-top:8px;"><span class="dist" data-km="38">38</span> <span class="u-dist">km</span> to go · resets Monday</div>
+                  </div>
+                  <div class="p-card">
+                    <div class="s-sub" style="margin-bottom:2px;">This week</div>
+                    <div class="lb-row"><span class="lb-rank">1</span><span class="lb-name">Priya R.</span><span class="lb-val"><span class="dist" data-km="24.1">24.1</span> <span class="u-dist">km</span></span></div>
+                    <div class="lb-row me"><span class="lb-rank">2</span><span class="lb-name">You</span><span class="lb-val"><span class="dist" data-km="18.6">18.6</span> <span class="u-dist">km</span></span></div>
+                    <div class="lb-row"><span class="lb-rank">3</span><span class="lb-name">Marcus H.</span><span class="lb-val"><span class="dist" data-km="12.3">12.3</span> <span class="u-dist">km</span></span></div>
+                    <div class="lb-row"><span class="lb-rank">4</span><span class="lb-name">Dani O.</span><span class="lb-val"><span class="dist" data-km="7">7.0</span> <span class="u-dist">km</span></span></div>
+                  </div>
+                  <div class="p-card" style="display:flex; align-items:center; gap:10px;">
+                    <span class="avatar c" aria-hidden="true"></span>
+                    <div style="flex:1;">
+                      <div class="p-name">Sunday long run</div>
+                      <div class="p-meta">Tomorrow 7:00 AM · 6 going</div>
+                    </div>
+                    <span class="p-tag">Going</span>
+                  </div>
+                </div>
+
+                <!-- Progress -->
+                <div class="screen" id="screen-progress" data-active="false">
+                  <div class="s-top">
+                    <div class="s-title">Consistency</div>
+                    <div class="s-sub">Last year</div>
+                  </div>
+                  <div class="p-card">
+                    <div class="s-sub">148 active days</div>
+                    <div class="heat" id="heat" aria-hidden="true"></div>
+                  </div>
+                  <div class="rec-grid">
+                    <div class="rec-cell"><div class="k">Streak</div><div class="v">11 days</div></div>
+                    <div class="rec-cell"><div class="k">This week</div><div class="v"><span class="dist" data-km="18.6">18.6</span> <span class="u-dist">km</span></div></div>
+                    <div class="rec-cell"><div class="k">Longest</div><div class="v"><span class="dist" data-km="21.1">21.1</span> <span class="u-dist">km</span></div></div>
+                    <div class="rec-cell"><div class="k">Badges</div><div class="v">23</div></div>
+                  </div>
+                </div>
+
+                <div class="tabbar" aria-hidden="true">
+                  <i class="on"></i><i></i><i></i><i></i><i></i>
+                </div>
+              </div>
+            </div>
+            <p class="caption">Interface recreated for the web. Sample data.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Trybes ─────────────────────────────────────────── -->
+    <section id="trybes">
+      <div class="wrap split">
+        <div class="sec-head" style="margin-bottom:0;">
+          <span class="eyebrow">Trybes</span>
+          <h2>Everyone's kilometres, one bar.</h2>
+          <p class="lede">A Trybe is a group with a goal. Public ones anyone can join, private ones need an invite, and what happens inside stays with the members.</p>
+          <ul class="tick" style="margin-top:10px;">
+            <li>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><b>Creators and captains.</b> Captains edit the Trybe, schedule events and remove members. Only the creator can delete it.</span>
+            </li>
+            <li>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><b>Its own feed and chat.</b> A post shared into a Trybe appears for members only, on the Trybe and in their feed.</span>
+            </li>
+            <li>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><b>Hidden workouts stay hidden.</b> Someone who hides their training simply is not counted on the board.</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="glass board" id="board">
+          <div class="s-top" style="margin-bottom:4px;">
+            <div>
+              <div class="eyebrow" style="margin-bottom:6px;">This week</div>
+              <div class="display" style="font-size:22px;">Sunrise Runners</div>
+            </div>
+            <span class="p-tag">42 members</span>
+          </div>
+          <div class="board-row"><span class="rk">1</span><span class="nm">Priya Raman</span><span class="vl"><span class="dist" data-km="24.1">24.1</span> <span class="u-dist">km</span></span></div>
+          <div class="board-bar"><span style="--w:100%"></span></div>
+          <div class="board-row"><span class="rk">2</span><span class="nm">You</span><span class="vl"><span class="dist" data-km="18.6">18.6</span> <span class="u-dist">km</span></span></div>
+          <div class="board-bar"><span style="--w:77%"></span></div>
+          <div class="board-row"><span class="rk">3</span><span class="nm">Marcus Hale</span><span class="vl"><span class="dist" data-km="12.3">12.3</span> <span class="u-dist">km</span></span></div>
+          <div class="board-bar"><span style="--w:51%"></span></div>
+          <div class="board-row"><span class="rk">4</span><span class="nm">Dani Okafor</span><span class="vl"><span class="dist" data-km="7">7.0</span> <span class="u-dist">km</span></span></div>
+          <div class="board-bar"><span style="--w:29%"></span></div>
+          <p class="caption" style="text-align:left; margin-top:6px;">Sample data.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Live cliques ───────────────────────────────────── -->
+    <section id="cliques">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">Cliques</span>
+          <h2>A session that starts at once, in four cities.</h2>
+          <p class="lede">Everyone taps ready, everyone starts together, and each person's distance moves on the others' screens while they run.</p>
+        </div>
+        <div class="cards">
+          <article class="glass card">
+            <span class="ico" aria-hidden="true">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+            </span>
+            <h3>Live positions</h3>
+            <p>Locations stream between participants for the length of the session, then stop. Nothing is followed outside a workout.</p>
+          </article>
+          <article class="glass card">
+            <span class="ico" aria-hidden="true">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg>
+            </span>
+            <h3>Invite by name</h3>
+            <p>Anyone you follow gets a notification that opens straight into the lobby, with a ready check before the start.</p>
+          </article>
+          <article class="glass card">
+            <span class="ico" aria-hidden="true">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+            </span>
+            <h3>It all counts</h3>
+            <p>A Clique workout lands in your history, your streak and your Trybe's weekly total like any other session.</p>
+          </article>
+          <article class="glass card">
+            <span class="ico" aria-hidden="true">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </span>
+            <h3>Talk through it</h3>
+            <p>Every Clique and Trybe carries its own thread, with replies and photos, kept to the people in it.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Progress ───────────────────────────────────────── -->
+    <section id="progress">
+      <div class="wrap split">
+        <div class="glass card" style="padding:28px;">
+          <span class="eyebrow">Consistency</span>
+          <div class="display" style="font-size:clamp(28px,4vw,42px); margin-block:12px 4px;">148 active days</div>
+          <p class="muted" style="font-size:14px;">Shaded by how long you trained. Darker is longer.</p>
+          <div class="heat" id="heatBig" style="grid-template-columns: repeat(26, 1fr); margin-top:18px;" aria-hidden="true"></div>
+          <div style="display:flex; justify-content:space-between; margin-top:14px; font-family:var(--mono); font-size:11px; color:var(--faint);">
+            <span>OCT</span><span>JAN</span><span>APR</span><span>JUL</span><span>SEP</span>
+          </div>
+        </div>
+
+        <div class="sec-head" style="margin-bottom:0;">
+          <span class="eyebrow">Progress</span>
+          <h2>Proof that you kept going.</h2>
+          <p class="lede">Two years of history, drawn two ways, with the goals you set rather than ones picked for you.</p>
+          <ul class="tick" style="margin-top:10px;">
+            <li>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><b>Calendar by count.</b> One session is a light tint, two to four darker, five or more solid.</span>
+            </li>
+            <li>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><b>Seven badge categories</b>, from distance and consistency to exploration and performance.</span>
+            </li>
+            <li>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><b>Kilometres or miles</b>, one switch on your account that follows you to a new phone.</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Devices ────────────────────────────────────────── -->
+    <section id="devices">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">Apps and devices</span>
+          <h2>Your watch is already compatible.</h2>
+          <p class="lede">Connect Apple Health or Health Connect once and the workouts your watch records arrive on their own. Every brand writes into one of those two stores through its own app, so there is no list to pick from.</p>
+          <div class="brand-row">
+            <span class="brand-pill">Apple Watch</span>
+            <span class="brand-pill">Garmin</span>
+            <span class="brand-pill">Fitbit</span>
+            <span class="brand-pill">Whoop</span>
+            <span class="brand-pill">Polar</span>
+            <span class="brand-pill">Samsung</span>
+            <span class="brand-pill">Oura</span>
+            <span class="brand-pill">Wear OS</span>
+          </div>
+        </div>
+
+        <div class="cards">
+          <article class="glass card">
+            <h3>Workouts, not step counts</h3>
+            <p>Each session arrives with its activity, time, distance and calories. Everyday step totals stay out of your history.</p>
+          </article>
+          <article class="glass card">
+            <h3>Never counted twice</h3>
+            <p>A run you recorded in Fitrybe is not added again when your watch writes the same session to the health store.</p>
+          </article>
+          <article class="glass card">
+            <h3>Filed on the right day</h3>
+            <p>A Saturday session synced on Monday still counts for Saturday in your calendar, streak and Trybe goal.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Safety ─────────────────────────────────────────── -->
+    <section id="safety">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">Privacy and safety</span>
+          <h2>You decide who sees you move.</h2>
+          <p class="lede">Visibility is checked every time somebody tries to read something, not stamped on when you post. Hide your workouts and your whole history goes with them; switch it back and everything returns exactly as it was.</p>
+        </div>
+        <div class="cards">
+          <article class="glass card"><h3>Workout visibility</h3><p>One switch hides every workout you have logged, older ones included, from profiles and leaderboards.</p></article>
+          <article class="glass card"><h3>Audience per post</h3><p>Everyone, or your Trybes only. A post shared into a Trybe never leaves it.</p></article>
+          <article class="glass card"><h3>Blocking both ways</h3><p>Posts, comments, profiles, search, follows, messages and notifications all stop at once. They are not told.</p></article>
+          <article class="glass card"><h3>Reports that reach a person</h3><p>Report a post in two taps. It is hidden from you immediately and sent for review.</p></article>
+          <article class="glass card"><h3>Being found</h3><p>Turn off discovery and you stay out of search and suggestions, without hiding from people you know.</p></article>
+          <article class="glass card"><h3>Leaving properly</h3><p>Delete your account in the app. Posts, workouts, messages and memberships go with it.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── FAQ ────────────────────────────────────────────── -->
+    <section id="faq">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="eyebrow">FAQ</span>
+          <h2>Questions worth answering</h2>
+        </div>
+        <div class="faq">
+          <details open>
+            <summary>Can I get it yet?</summary>
+            <div class="faq-body">Not quite. Fitrybe is in development and going through App Store and Play Store review before general release. Nothing here is a store listing.</div>
+          </details>
+          <details>
+            <summary>What does it cost?</summary>
+            <div class="faq-body">Recording, Trybes, Cliques, the feed and your whole history are the app. A Pro plan is planned as a monthly or annual subscription with a 14-day trial, and pricing is not settled. There are no ads.</div>
+          </details>
+          <details>
+            <summary>What is the difference between a Trybe and a Clique?</summary>
+            <div class="faq-body">A Trybe is a club that lasts: members, a weekly goal, leaderboards, events and a chat. A Clique is one live session that starts, runs and finishes, with everyone's progress visible to each other while it does.</div>
+          </details>
+          <details>
+            <summary>Does it drain my battery?</summary>
+            <div class="faq-body">A GPS session uses the same location hardware as any tracker, and only while a session is running. Outside a workout the app does not follow you, and a Clique streams positions only for the length of that session.</div>
+          </details>
+          <details>
+            <summary>Can I keep my workouts private but still join a club?</summary>
+            <div class="faq-body">Yes. Hide your workouts and you still belong to your Trybes, post, chat and RSVP to events. Your distance is simply not counted on the leaderboard.</div>
+          </details>
+          <details>
+            <summary>What happens to my data if I leave?</summary>
+            <div class="faq-body">Deleting your account removes it along with your posts, workouts, comments, messages and memberships. Accounts created with Apple are revoked with Apple at the same time.</div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Closing ────────────────────────────────────────── -->
+    <section>
+      <div class="wrap closing">
+        <span class="eyebrow">Coming soon</span>
+        <h2>Bring your <span class="shine">people</span>.</h2>
+        <p class="lede" style="margin-inline:auto;">Fitrybe launches on iOS and Android. No ads, no selling your training to anyone.</p>
+        <a class="btn" href="#top">Back to the top</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap foot">
+      <div>
+        <a class="brand" href="#top" style="margin-bottom:10px;"><span class="brand-mark" aria-hidden="true"></span>Fitrybe</a>
+        <p class="muted" style="font-size:14px; max-width:40ch;">Train together, wherever you are. In development for iOS and Android.</p>
+      </div>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="#tour">Tour</a>
+        <a href="#trybes">Trybes</a>
+        <a href="#devices">Devices</a>
+        <a href="#safety">Privacy</a>
+        <a href="#faq">FAQ</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/terms">Terms of Use</a>
+      </nav>
+    </div>
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* ── Units: one switch flips every figure on the page ── */
+    var KM_PER_MILE = 1.60934;
+    var imperial = false;
+
+    function renderUnits() {
+      document.querySelectorAll('.dist').forEach(function (el) {
+        var km = parseFloat(el.getAttribute('data-km'));
+        if (isNaN(km)) return;
+        var value = imperial ? km / KM_PER_MILE : km;
+        el.textContent = value >= 100 ? Math.round(value) : value.toFixed(1);
+      });
+      document.querySelectorAll('.pace').forEach(function (el) {
+        var perKm = parseFloat(el.getAttribute('data-sec-per-km'));
+        if (isNaN(perKm)) return;
+        var secs = Math.round(imperial ? perKm * KM_PER_MILE : perKm);
+        var m = Math.floor(secs / 60), s = secs % 60;
+        el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+      });
+      document.querySelectorAll('.u-dist').forEach(function (el) { el.textContent = imperial ? 'mi' : 'km'; });
+      document.querySelectorAll('.u-pace').forEach(function (el) { el.textContent = imperial ? '/mi' : '/km'; });
+      document.getElementById('unit-km').setAttribute('aria-pressed', String(!imperial));
+      document.getElementById('unit-mi').setAttribute('aria-pressed', String(imperial));
+    }
+    function setUnits(next) {
+      imperial = next;
+      renderUnits();
+      try { localStorage.setItem('fitrybe-units', next ? 'imperial' : 'metric'); } catch (e) { /* private window */ }
+    }
+    document.getElementById('unit-km').addEventListener('click', function () { setUnits(false); });
+    document.getElementById('unit-mi').addEventListener('click', function () { setUnits(true); });
+    try { imperial = localStorage.getItem('fitrybe-units') === 'imperial'; } catch (e) { imperial = false; }
+    renderUnits();
+
+    /* ── Marquee of the activities the app supports ── */
+    var ACTIVITIES = ['Running', 'Walking', 'Cycling', 'Hiking', 'Open Water Swimming', 'Kayaking',
+      'Paddleboarding', 'Roller Skating', 'Skateboarding', 'Dog Walking', 'Wheelchair Activity',
+      'Gym Workout', 'Rock Climbing', 'Skiing', 'Snowboarding', 'Football', 'Basketball', 'Tennis',
+      'Badminton', 'Cricket', 'Rugby', 'Boxing', 'Martial Arts', 'Yoga', 'Calisthenics', 'Golf',
+      'Disc Golf', 'Frisbee', 'Canoeing', 'Rowing', 'Commute Ride', 'Nature Walk', 'Volleyball', 'Scooter Riding'];
+    var track = document.getElementById('marquee');
+    if (track) {
+      var html = ACTIVITIES.map(function (a) { return '<span>' + a + '</span>'; }).join('');
+      track.innerHTML = html + html;
+    }
+
+    /* ── Heatmaps, from a fixed pattern so every visit matches ── */
+    function paintHeat(el, count) {
+      if (!el) return;
+      var seed = 11, cells = '';
+      for (var i = 0; i < count; i++) {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        var r = seed / 2147483648;
+        var level = r > 0.84 ? 4 : r > 0.67 ? 3 : r > 0.47 ? 2 : r > 0.27 ? 1 : 0;
+        cells += '<i data-l="' + level + '"></i>';
+      }
+      el.innerHTML = cells;
+    }
+    paintHeat(document.getElementById('heat'), 133);
+    paintHeat(document.getElementById('heatBig'), 182);
+
+    /* ── Pinned tour: the phone follows the copy ── */
+    var steps = Array.prototype.slice.call(document.querySelectorAll('.step'));
+    var phone = document.getElementById('phone');
+    function showScreen(name) {
+      document.querySelectorAll('.screen').forEach(function (s) {
+        s.setAttribute('data-active', String(s.id === 'screen-' + name));
+      });
+    }
+    if (steps.length && 'IntersectionObserver' in window) {
+      var stepObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          steps.forEach(function (s) { s.classList.toggle('is-active', s === entry.target); });
+          showScreen(entry.target.getAttribute('data-screen'));
+          if (phone && !reduce) {
+            // A small turn each time the screen changes, so the device feels
+            // handled rather than pasted onto the page.
+            var i = steps.indexOf(entry.target);
+            phone.style.setProperty('--ry', (-13 + i * 5) + 'deg');
+            phone.style.setProperty('--rx', (4 - i * 1.4) + 'deg');
+          }
+        });
+      }, { rootMargin: '-45% 0px -45% 0px', threshold: 0 });
+      steps.forEach(function (s) { stepObserver.observe(s); });
+    }
+
+    /* ── Counters ── */
+    document.querySelectorAll('[data-count]').forEach(function (el) {
+      var target = parseInt(el.getAttribute('data-count'), 10);
+      if (isNaN(target) || reduce) return;
+      var start = null;
+      function tick(now) {
+        if (start === null) start = now;
+        var t = Math.min((now - start) / 1100, 1);
+        el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3)));
+        if (t < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+
+    /* ── Reveal below the fold, from a visible resting state ── */
+    if (!reduce && 'IntersectionObserver' in window) {
+      var targets = document.querySelectorAll('.sec-head, .card, .board, details, .brand-pill, .tick li');
+      var below = [];
+      targets.forEach(function (el) {
+        if (el.getBoundingClientRect().top > window.innerHeight * 0.92) {
+          el.classList.add('will-reveal');
+          below.push(el);
+        }
+      });
+      var revealObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.remove('will-reveal');
+          entry.target.classList.add('revealed');
+          revealObserver.unobserve(entry.target);
+        });
+      }, { rootMargin: '0px 0px -10% 0px' });
+      below.forEach(function (el) { revealObserver.observe(el); });
+    }
+
+    /* ── Leaderboard bars fill when the card is reached ── */
+    var board = document.getElementById('board');
+    if (board) {
+      if ('IntersectionObserver' in window) {
+        var boardObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (e) {
+            if (!e.isIntersecting) return;
+            board.classList.add('is-seen');
+            boardObserver.unobserve(board);
+          });
+        }, { rootMargin: '0px 0px -20% 0px' });
+        boardObserver.observe(board);
+      } else {
+        board.classList.add('is-seen');
+      }
+    }
+
+    /* ── Cursor spotlight on glass cards ── */
+    if (window.matchMedia('(hover: hover)').matches) {
+      document.querySelectorAll('.glass').forEach(function (card) {
+        card.addEventListener('pointermove', function (e) {
+          var rect = card.getBoundingClientRect();
+          card.style.setProperty('--mx', (e.clientX - rect.left) + 'px');
+          card.style.setProperty('--my', (e.clientY - rect.top) + 'px');
+        });
+      });
+    }
+
+    /* ── Top bar and scroll progress ── */
+    var topbar = document.getElementById('topbar');
+    var bar = document.getElementById('progressBar');
+    function onScroll() {
+      var y = window.scrollY;
+      topbar.classList.toggle('is-stuck', y > 12);
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      bar.style.width = (max > 0 ? (y / max) * 100 : 0) + '%';
+    }
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    /* ── The 3D layer: activity rings that become a dumbbell ── */
+    (function scene() {
+      var canvas = document.getElementById('scene');
+      if (!canvas || typeof THREE === 'undefined') return;
+
+      var renderer;
+      try {
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+      } catch (e) {
+        return; // No WebGL: the ambient gradients carry the page on their own.
+      }
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      var scene = new THREE.Scene();
+      var camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera.position.set(0, 0, 13);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      var key = new THREE.DirectionalLight(0xffffff, 1.1);
+      key.position.set(4, 6, 8);
+      scene.add(key);
+      var ember = new THREE.PointLight(0xff5a1f, 2.4, 40);
+      ember.position.set(-6, 3, 6);
+      scene.add(ember);
+      var mint = new THREE.PointLight(0x37e0a8, 1.1, 36);
+      mint.position.set(7, -4, 4);
+      scene.add(mint);
+
+      function material(color, rough, metal) {
+        return new THREE.MeshStandardMaterial({
+          color: color, roughness: rough, metalness: metal,
+          transparent: true, opacity: 1,
+        });
+      }
+
+      // Three activity rings, the shape every athlete already reads as a day
+      // of training closed out.
+      var rings = new THREE.Group();
+      [
+        { r: 3.0, t: 0.34, c: 0xff5a1f },
+        { r: 2.25, t: 0.3, c: 0xff8a4c },
+        { r: 1.5, t: 0.26, c: 0x37e0a8 }
+      ].forEach(function (spec, i) {
+        var mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(spec.r, spec.t, 22, 96, Math.PI * (i === 2 ? 1.35 : 1.7)),
+          material(spec.c, 0.28, 0.65)
+        );
+        mesh.rotation.z = i * 0.7;
+        rings.add(mesh);
+      });
+      rings.position.set(4.6, 0.4, 0);
+      scene.add(rings);
+
+      // A dumbbell, built from primitives rather than a downloaded model so
+      // the page stays one file.
+      var bell = new THREE.Group();
+      var steel = material(0xcfd6de, 0.32, 0.9);
+      var grip = material(0x23262d, 0.55, 0.5);
+      var bar = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 5.6, 28), grip);
+      bar.rotation.z = Math.PI / 2;
+      bell.add(bar);
+      [-1, 1].forEach(function (side) {
+        [[2.1, 0.62, 0.85], [2.65, 0.52, 0.62]].forEach(function (p) {
+          var plate = new THREE.Mesh(new THREE.CylinderGeometry(p[2], p[2], p[1], 36), steel);
+          plate.rotation.z = Math.PI / 2;
+          plate.position.x = side * p[0];
+          bell.add(plate);
+        });
+      });
+      bell.position.set(4.4, 0, 0);
+      bell.scale.setScalar(0.9);
+      bell.visible = false;
+      scene.add(bell);
+
+      var pointer = { x: 0, y: 0 };
+      window.addEventListener('pointermove', function (e) {
+        pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+        pointer.y = (e.clientY / window.innerHeight) * 2 - 1;
+      }, { passive: true });
+
+      function layout() {
+        var w = window.innerWidth;
+        var narrow = w < 940;
+        // On a phone the objects sit behind the copy, smaller and centred.
+        rings.position.set(narrow ? 0 : 4.6, narrow ? 1.2 : 0.4, narrow ? -4 : 0);
+        bell.position.set(narrow ? 0 : 4.4, narrow ? 0.4 : 0, narrow ? -4 : 0);
+        rings.scale.setScalar(narrow ? 0.72 : 1);
+        bell.scale.setScalar(narrow ? 0.66 : 0.9);
+        camera.aspect = w / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, window.innerHeight);
+      }
+      layout();
+      window.addEventListener('resize', layout);
+
+      var devicesTop = 0;
+      function measure() {
+        var el = document.getElementById('devices');
+        devicesTop = el ? el.getBoundingClientRect().top + window.scrollY : 1e9;
+      }
+      measure();
+      window.addEventListener('resize', measure);
+
+      var clock = new THREE.Clock();
+      var fade = 0; // 0 rings, 1 dumbbell
+
+      function frame() {
+        var dt = Math.min(clock.getDelta(), 0.05);
+        var y = window.scrollY;
+
+        // Past the devices section the rings hand over to the dumbbell.
+        var want = y > devicesTop - window.innerHeight * 0.6 ? 1 : 0;
+        fade += (want - fade) * Math.min(dt * 3.2, 1);
+
+        rings.visible = fade < 0.985;
+        bell.visible = fade > 0.015;
+        rings.children.forEach(function (m) { m.material.opacity = 1 - fade; });
+        bell.children.forEach(function (m) { m.material.opacity = fade; });
+
+        var scroll = y * 0.0012;
+        rings.rotation.y += dt * 0.22;
+        rings.rotation.x = -0.35 + pointer.y * 0.12 + scroll * 0.3;
+        rings.children.forEach(function (m, i) { m.rotation.z += dt * (0.1 + i * 0.07); });
+
+        bell.rotation.y = scroll * 1.4 + pointer.x * 0.25;
+        bell.rotation.x = -0.25 + pointer.y * 0.14;
+        bell.rotation.z = Math.sin(clock.elapsedTime * 0.5) * 0.08;
+
+        camera.position.x += (pointer.x * 0.6 - camera.position.x) * 0.04;
+        camera.position.y += (-pointer.y * 0.4 - camera.position.y) * 0.04;
+        camera.lookAt(scene.position);
+
+        renderer.render(scene, camera);
+        if (!reduce) requestAnimationFrame(frame);
+      }
+
+      canvas.classList.add('ready');
+      if (reduce) {
+        rings.rotation.x = -0.3;
+        renderer.render(scene, camera);
+      } else {
+        requestAnimationFrame(frame);
+      }
+    })();
+  })();
+</script>

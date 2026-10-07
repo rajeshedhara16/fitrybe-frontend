@@ -10,8 +10,11 @@ import 'create_trybe_screen.dart';
 import 'user_profile_screen.dart';
 import 'post_detail_screen.dart';
 
+import '../models/trybe_activity_options.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
+import '../services/units.dart';
+import '../widgets/post_options_sheet.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 
@@ -63,11 +66,11 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
       final mine = results[0];
       final all = results[1];
 
-      // Feed the Trybe tab from the groups the user actually belongs to.
-      final feedSourceId = mine.isNotEmpty ? mine.first['id'] as String? : null;
-      final feed = feedSourceId == null
+      // Posts from everyone in every Trybe the athlete belongs to, not just
+      // the first one.
+      final feed = mine.isEmpty
           ? <Map<String, dynamic>>[]
-          : await ApiService.getTrybePosts(feedSourceId);
+          : await ApiService.getMyTrybesFeed();
 
       if (!mounted) return;
       setState(() {
@@ -301,7 +304,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                   '${trybe['name'] ?? 'Trybe'}',
                   ApiService.media(trybe['imageUrl'] as String?),
                   '${trybe['memberCount'] ?? 1} members',
-                  '${trybe['category'] ?? 'Fitrybe'}',
+                  _trybeActivity(trybe),
                 ),
                 const SizedBox(width: 14),
               ],
@@ -444,7 +447,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                           style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 11),
                         ),
                         const SizedBox(width: 10),
-                        Icon(Icons.emoji_events_rounded, color: _accent, size: 13),
+                        Icon(activityIconFor(active), color: Colors.white38, size: 14),
                         const SizedBox(width: 4),
                         Text(
                           active,
@@ -524,6 +527,18 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
     return (location == null || location.isEmpty)
         ? members
         : '$location • $members';
+  }
+
+  static String _trybeActivity(Map<String, dynamic> trybe) {
+    final interests = trybe['activityInterests'];
+    if (interests is List && interests.isNotEmpty) {
+      return '${interests.first}';
+    }
+    final category = trybe['category'] as String?;
+    if (category != null && category.trim().isNotEmpty) {
+      return category.trim();
+    }
+    return 'Workout';
   }
 
   void _showAllLocalGroupsModal(BuildContext context) {
@@ -906,7 +921,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                         ),
                       ),
                       Text(
-                        '${_relativeTime(post['createdAt'])} • ${post['type'] ?? 'Update'}',
+                        '${_relativeTime(post['createdAt'])} • ${post['trybe'] is Map ? (post['trybe'] as Map)['name'] : post['type'] ?? 'Update'}',
                         style: GoogleFonts.hankenGrotesk(
                           color: Colors.white38,
                           fontSize: 11.5,
@@ -916,6 +931,35 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                   ),
                 ),
               ),
+              if (author['id'] != SessionService().userId)
+                GestureDetector(
+                  onTap: () {
+                    final index = _trybeFeedPosts.indexOf(post);
+                    PostOptions.open(
+                      context,
+                      postId: '${post['id']}',
+                      authorName: _nameOf(author),
+                      authorId: author['id'] as String?,
+                      onAuthorBlocked: (id) {
+                        if (!mounted) return;
+                        setState(() => _trybeFeedPosts
+                            .removeWhere((p) => (p['author'] as Map?)?['id'] == id));
+                      },
+                      onRemove: () {
+                        if (mounted) setState(() => _trybeFeedPosts.remove(post));
+                      },
+                      onRestore: () {
+                        if (!mounted || _trybeFeedPosts.contains(post)) return;
+                        setState(() => _trybeFeedPosts.insert(
+                            index.clamp(0, _trybeFeedPosts.length), post));
+                      },
+                    );
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.more_horiz, color: Colors.white38),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -950,7 +994,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                 Icon(Icons.route_rounded, color: _accent, size: 15),
                 const SizedBox(width: 6),
                 Text(
-                  '${((activity['distance'] as num? ?? 0) / 1000).toStringAsFixed(2)} km',
+                  Units.distance(activity['distance'] as num? ?? 0),
                   style: GoogleFonts.hankenGrotesk(
                     color: Colors.white70,
                     fontSize: 12,
@@ -1269,6 +1313,7 @@ class _TrybesTabState extends State<TrybesTab> with TickerProviderStateMixin {
                         chatId: conversationId,
                         name: name,
                         avatar: avatar,
+                        otherUserId: friend['id'] as String?,
                       ),
                     ),
                   );

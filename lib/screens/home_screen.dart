@@ -24,9 +24,13 @@ import '../services/socket_service.dart';
 import '../services/api_service.dart';
 import '../services/goal_progress.dart';
 import '../services/units.dart';
+import '../services/health_import.dart';
 import '../services/health_service.dart';
 import '../services/session_service.dart';
 import '../services/notification_service.dart';
+import '../services/live_session.dart';
+import '../widgets/live_session_banner.dart';
+import '../widgets/post_options_sheet.dart';
 import '../widgets/state_views.dart';
 import '../widgets/user_avatar.dart';
 import 'package:share_plus/share_plus.dart';
@@ -42,7 +46,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentNavIndex = 0;
   int _activeTrybesSubTab = 0; // 0: Trybe, 1: Friends
-  int _activeCliqueSubTab = 0; // 0: Activity, 1: Challenges, 2: Synergy
+  int _activeCliqueSubTab = 0; // 0: Activity, 1: Challenges (hidden), 2: Synergy
   final Color _accent = const Color(0xFFFF5722);
   final Color _cardBg = const Color(0xFF1F1F22);
   final Color _bg = const Color(0xFF131316);
@@ -103,6 +107,11 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadAnalytics();
     _loadLiveSessions();
     HealthService().fetchTodayHealthData();
+    // Workouts recorded on a watch arrive on their own, without the athlete
+    // having to open a settings screen to ask for them.
+    HealthImport().syncIfDue();
+    // A workout interrupted by the app being killed is picked back up.
+    LiveSession().restore();
   }
 
   void _onLobbyChanged(dynamic _) {
@@ -502,7 +511,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
       ),
-      body: _buildCurrentTab(),
+      body: Column(
+        children: [
+          // A workout left running on another screen keeps a way back.
+          LiveSessionBanner(
+            onOpenSolo: () => setState(() => _currentNavIndex = 2),
+          ),
+          Expanded(child: _buildCurrentTab()),
+        ],
+      ),
       floatingActionButton: _currentNavIndex == 2
           ? SizedBox(
               height: 48,
@@ -799,7 +816,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                         Text(
-                          'Recent • $locationTag',
+                          post['trybe'] is Map
+                              ? 'In ${(post['trybe'] as Map)['name']} • $locationTag'
+                              : 'Recent • $locationTag',
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white54,
                             fontSize: 12,
@@ -814,15 +833,37 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   onPressed: () {
-                    _showPostOptions(
-                      context: context,
-                      isOwnPost: false,
+                    final authorId = author['id'] as String? ?? post['authorId'] as String?;
+                    if (authorId != null && authorId == SessionService().userId) {
+                      _showPostOptions(
+                        context: context,
+                        isOwnPost: true,
+                        postId: postId,
+                        authorName: authorName,
+                        onHide: () {},
+                      );
+                      return;
+                    }
+                    // Someone else's post: hide, report and block are all real
+                    // and stored on the server.
+                    final index = _backendPosts.indexOf(post);
+                    PostOptions.open(
+                      context,
                       postId: postId,
-                      authorName: authorName,
-                      onHide: () {
-                        setState(() {
-                          _backendPosts.removeWhere((p) => p['id'] == postId);
-                        });
+                      authorName: authorName.isEmpty ? 'this athlete' : authorName,
+                      authorId: authorId,
+                      onRemove: () {
+                        if (mounted) setState(() => _backendPosts.remove(post));
+                      },
+                      onRestore: () {
+                        if (!mounted || _backendPosts.contains(post)) return;
+                        setState(() => _backendPosts.insert(
+                            index.clamp(0, _backendPosts.length), post));
+                      },
+                      onAuthorBlocked: (id) {
+                        if (!mounted) return;
+                        setState(() => _backendPosts.removeWhere((p) =>
+                            (p['author'] as Map?)?['id'] == id || p['authorId'] == id));
                       },
                     );
                   },
@@ -1276,8 +1317,8 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Expanded(
               child: _buildStatsCard(
-                health.todaySteps > 0 ? 'Steps' : 'Activities',
-                health.todaySteps > 0 ? '${health.todaySteps}' : '$todayWorkouts',
+                'Activities',
+                '$todayWorkouts',
                 '',
               ),
             ),
@@ -1737,7 +1778,7 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'CHALLENGES & CLIQUE',
+              'LIVE CLIQUES',
               style: GoogleFonts.hankenGrotesk(
                 color: Colors.white70,
                 fontSize: 12,
@@ -1780,7 +1821,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
-                  Icons.emoji_events_rounded,
+                  Icons.bolt_rounded,
                   color: Color(0xFFFF5722),
                   size: 20,
                 ),
@@ -1792,7 +1833,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Group Challenges',
+                      'Start a Clique',
                       style: GoogleFonts.hankenGrotesk(
                         color: Colors.white,
                         fontSize: 13.5,
@@ -1801,7 +1842,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Compete and move together in Clique',
+                      'Train live with friends, wherever they are',
                       style: GoogleFonts.hankenGrotesk(
                         color: Colors.white54,
                         fontSize: 10.5,
@@ -1953,60 +1994,25 @@ class _HomeScreenState extends State<HomeScreen> {
                       _deletePost(postId);
                     },
                   ),
-                ] else ...[
-                  ListTile(
-                    leading: const Icon(Icons.report_gmailerrorred_rounded, color: Colors.redAccent),
-                    title: Text('Report Post', style: GoogleFonts.hankenGrotesk(color: Colors.redAccent)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          backgroundColor: _accent,
-                          content: Text('Thank you. Post reported.', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                        ),
-                      );
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.volume_off_rounded, color: Colors.white70),
-                    title: Text('Mute $authorName', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                    onTap: () {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          backgroundColor: _accent,
-                          content: Text('You won\'t see posts from $authorName.', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                        ),
-                      );
-                    },
-                  ),
                 ],
+                // Posts have no web address yet, so this shares what the post
+                // says rather than copying a link that goes nowhere. Someone
+                // else's post gets the shared options menu instead of this one.
                 ListTile(
-                  leading: const Icon(Icons.link_rounded, color: Colors.white70),
-                  title: Text('Copy Link', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
+                  leading: const Icon(Icons.share_outlined, color: Colors.white70),
+                  title: Text('Share Post', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
                   onTap: () {
                     Navigator.pop(context);
-                    Clipboard.setData(const ClipboardData(text: 'https://fitrybe.com/posts/1'));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: _accent,
-                        content: Text('Link copied to clipboard.', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                      ),
+                    final post = _backendPosts.firstWhere(
+                      (p) => p['id'] == postId,
+                      orElse: () => const <String, dynamic>{},
                     );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.visibility_off_outlined, color: Colors.white70),
-                  title: Text('Hide Post', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    onHide();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: _accent,
-                        content: Text('Post hidden.', style: GoogleFonts.hankenGrotesk(color: Colors.white)),
-                      ),
-                    );
+                    final caption = '${post['caption'] ?? ''}'.trim();
+                    SharePlus.instance.share(ShareParams(
+                      text: caption.isEmpty
+                          ? 'Check out my latest workout on Fitrybe.'
+                          : '$caption\n\nShared from Fitrybe.',
+                    ));
                   },
                 ),
               ],

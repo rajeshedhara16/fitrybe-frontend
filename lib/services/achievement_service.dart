@@ -25,7 +25,7 @@ class AchievementService {
 
   /// Every badge with progress zeroed — the honest starting point for a new
   /// account, before the server tells us what has been earned.
-  static List<AchievementBadge> _lockedCatalogue() => AchievementData.badges
+  static List<AchievementBadge> _lockedCatalogue() => AchievementData.visibleBadges
       .map((b) => b.copyWith(cur: 0, clearDate: true, clearPctOverride: true))
       .toList();
 
@@ -63,7 +63,7 @@ class AchievementService {
       final merged = <AchievementBadge>[];
       final toUnlock = <String>[];
 
-      for (final badge in AchievementData.badges) {
+      for (final badge in AchievementData.visibleBadges) {
         final progress = _progressFor(
           badge,
           totalWorkouts: totalWorkouts,

@@ -3,9 +3,9 @@
   "configurations": [
     {
       "name": "fitrybe-web",
-      "runtimeExecutable": "flutter",
-      "runtimeArgs": ["run", "-d", "chrome", "--web-port", "8765"],
-      "port": 8765
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:/VS_Code/fitrybe-web", "run", "dev"],
+      "port": 3000
     }
   ]
 }

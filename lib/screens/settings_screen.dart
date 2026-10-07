@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'subscription_screen.dart';
 import 'about_screen.dart';
+import 'connected_sources_screen.dart';
 import 'privacy_screen.dart';
 import 'units_screen.dart';
 import 'account_security_screen.dart';
@@ -137,6 +138,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     await Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const UnitsScreen()),
+                    );
+                    if (mounted) setState(() {});
+                  },
+                ),
+                _buildSettingsTile(
+                  icon: Icons.watch_rounded,
+                  title: 'Apps & Devices',
+                  subtitle: 'Bring in workouts from your watch',
+                  onTap: () async {
+                    HapticFeedback.lightImpact();
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ConnectedSourcesScreen(),
+                      ),
                     );
                     if (mounted) setState(() {});
                   },

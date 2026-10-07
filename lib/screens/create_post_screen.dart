@@ -17,7 +17,12 @@ class CreatePostScreen extends StatefulWidget {
   /// distance and pace.
   final Map<String, dynamic>? activity;
 
-  const CreatePostScreen({super.key, this.activity});
+  /// The Trybe this post is shared into, when opened from a Trybe. Only its
+  /// members see the post, so the audience picker is replaced by a note saying so.
+  final String? trybeId;
+  final String? trybeName;
+
+  const CreatePostScreen({super.key, this.activity, this.trybeId, this.trybeName});
 
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
@@ -243,6 +248,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
         audience: _selectedAudience == 'Everyone' ? 'EVERYONE' : 'TRYBES',
         locationTag: _locationTag,
         activityId: widget.activity?['id'] as String?,
+        trybeId: widget.trybeId,
         images: _selectedImages.map((x) => File(x.path)).toList(),
       );
 
@@ -276,6 +282,44 @@ class _CreatePostScreenState extends State<CreatePostScreen>
         ),
       );
     }
+  }
+
+  /// Stands in for the audience picker when posting into a Trybe.
+  Widget _buildTrybeBanner() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _accent.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.groups_rounded, color: _accent, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Posting to ${widget.trybeName ?? 'your Trybe'}',
+                  style: GoogleFonts.hankenGrotesk(
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Only members of this Trybe see it, on the Trybe and in their feed.',
+                  style: GoogleFonts.hankenGrotesk(color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── UI ─────────────────────────────────────────────────────────────────────
@@ -506,6 +550,9 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                   ],
 
                   // ── Audience Selector ──────────────────────────────────
+                  if (widget.trybeId != null)
+                    _buildTrybeBanner()
+                  else ...[
                   Text(
                     'VISIBLE TO',
                     style: GoogleFonts.hankenGrotesk(
@@ -567,6 +614,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                       );
                     }).toList(),
                   ),
+                  ],
                   const SizedBox(height: 80),
                 ],
               ),

@@ -291,6 +291,7 @@ class ApiService {
     String audience = 'EVERYONE',
     String? locationTag,
     String? activityId,
+    String? trybeId,
     List<File> images = const [],
   }) async {
     final fields = <String, String>{
@@ -300,6 +301,8 @@ class ApiService {
       if (locationTag != null && locationTag.isNotEmpty)
         'locationTag': locationTag,
       'activityId': ?activityId,
+      // Shares it into that Trybe, for its members only.
+      'trybeId': ?trybeId,
     };
     final res = await _client.multipartPost(
       '/posts',
@@ -381,6 +384,18 @@ class ApiService {
       Map<String, dynamic> activity) async {
     final res = await _client.post('/activities', body: activity);
     return _ensureOk(res)['activity'] as Map<String, dynamic>?;
+  }
+
+  /// Files workouts read from Apple Health or Health Connect.
+  ///
+  /// The server decides what is new: sending the same workout again, or one
+  /// that matches a session recorded in the app, stores nothing. Answers with
+  /// `imported` and `duplicates`.
+  static Future<Map<String, dynamic>> importActivities(
+      List<Map<String, dynamic>> activities) async {
+    final res = await _client
+        .post('/activities/import', body: {'activities': activities});
+    return _ensureOk(res);
   }
 
   /// [source] narrows to where workouts were recorded, 'RECORDED' or
@@ -466,11 +481,13 @@ class ApiService {
     String? location,
     bool isPublic = true,
     List<String> activityInterests = const [],
+    double? weeklyGoalKm,
     File? image,
   }) async {
     final fields = <String, String>{
       'name': name,
       'isPublic': isPublic.toString(),
+      if (weeklyGoalKm != null) 'weeklyGoalKm': '$weeklyGoalKm',
       if (description != null && description.isNotEmpty)
         'description': description,
       if (category != null && category.isNotEmpty) 'category': category,
@@ -493,10 +510,203 @@ class ApiService {
     return _listOf(res, 'members');
   }
 
-  static Future<List<Map<String, dynamic>>> getTrybeLeaderboard(
-      String trybeId) async {
-    final res = await _client.get('/trybes/$trybeId/leaderboard');
-    return _listOf(res, 'leaderboard');
+  /// Members ranked by distance since [since], or all time when null, plus the
+  /// Trybe's combined distance. [since] is the start of the athlete's own week
+  /// or month in their timezone, which only the app knows.
+  static Future<Map<String, dynamic>> getTrybeLeaderboard(
+    String trybeId, {
+    DateTime? since,
+  }) async {
+    final res = await _client.get('/trybes/$trybeId/leaderboard${_query({
+          'since': since?.toUtc().toIso8601String(),
+        })}');
+    if (res.statusCode >= 300) {
+      return {'leaderboard': <Map<String, dynamic>>[], 'totalDistanceKm': 0.0};
+    }
+    return {
+      'leaderboard': _listOf(res, 'leaderboard'),
+      'totalDistanceKm':
+          (_decodeMap(res)['totalDistanceKm'] as num?)?.toDouble() ?? 0.0,
+    };
+  }
+
+  /// Edits a Trybe. Only fields that are passed change. [clearWeeklyGoal]
+  /// removes the goal, and [removeImage] the photo, unless a new [image] is
+  /// given.
+  static Future<Map<String, dynamic>> updateTrybe(
+    String trybeId, {
+    String? name,
+    String? description,
+    String? location,
+    String? category,
+    bool? isPublic,
+    List<String>? activityInterests,
+    double? weeklyGoalKm,
+    bool clearWeeklyGoal = false,
+    File? image,
+    bool removeImage = false,
+  }) async {
+    final fields = <String, String>{
+      'name': ?name,
+      'description': ?description,
+      'location': ?location,
+      'category': ?category,
+      if (isPublic != null) 'isPublic': '$isPublic',
+      if (activityInterests != null)
+        'activityInterests': activityInterests.join(','),
+      if (clearWeeklyGoal)
+        'weeklyGoalKm': ''
+      else if (weeklyGoalKm != null)
+        'weeklyGoalKm': '$weeklyGoalKm',
+      if (removeImage && image == null) 'removeImage': 'true',
+    };
+    final res = await _client.multipartPost(
+      '/trybes/$trybeId',
+      method: 'PATCH',
+      fields: fields,
+      files: image == null ? null : await _filesFrom('image', [image]),
+    );
+    return _ensureOk(res)['trybe'] as Map<String, dynamic>;
+  }
+
+  static Future<void> deleteTrybe(String trybeId) async {
+    final res = await _client.delete('/trybes/$trybeId');
+    if (res.statusCode >= 300) _ensureOk(res);
+  }
+
+  /// Posts from everyone in every Trybe the athlete belongs to.
+  static Future<List<Map<String, dynamic>>> getMyTrybesFeed({
+    String? cursor,
+    int limit = 20,
+  }) async {
+    final res = await _client
+        .get('/trybes/feed${_query({'cursor': cursor, 'limit': limit})}');
+    return _listOf(res, 'posts');
+  }
+
+  static Future<void> setTrybeMuted(String trybeId, bool muted) async {
+    final res =
+        await _client.put('/trybes/$trybeId/mute', body: {'muted': muted});
+    _ensureOk(res);
+  }
+
+  /// [role] is 'CAPTAIN' or 'MEMBER'. Only the creator can do this.
+  static Future<void> setTrybeMemberRole(
+    String trybeId,
+    String userId,
+    String role,
+  ) async {
+    final res = await _client.patch(
+      '/trybes/$trybeId/members/$userId/role',
+      body: {'role': role},
+    );
+    _ensureOk(res);
+  }
+
+  static Future<void> removeTrybeMember(String trybeId, String userId) async {
+    final res = await _client.delete('/trybes/$trybeId/members/$userId');
+    if (res.statusCode >= 300) _ensureOk(res);
+  }
+
+  /// Sends an invite and says what happened: 'invited', 'alreadyInvited' or
+  /// 'alreadyMember'. Throws with the server's reason otherwise.
+  static Future<String> sendTrybeInvite(String trybeId, String userId) async {
+    final res = await _client
+        .post('/trybes/$trybeId/invite', body: {'userId': userId});
+    final data = _ensureOk(res);
+    if (data['alreadyMember'] == true) return 'alreadyMember';
+    if (data['alreadyInvited'] == true) return 'alreadyInvited';
+    return 'invited';
+  }
+
+  /// Athletes who could be invited to a Trybe. Current members are left out,
+  /// and anyone with a pending invite comes back with `invited: true`.
+  static Future<List<Map<String, dynamic>>> getTrybeInviteCandidates(
+    String trybeId, {
+    String? search,
+    int limit = 25,
+  }) async {
+    final res = await _client.get('/trybes/$trybeId/invite-candidates${_query({
+          'search': search,
+          'limit': limit,
+        })}');
+    return _listOf(res, 'users');
+  }
+
+  /// Upcoming events soonest first, or past ones most recent first. Throws on
+  /// failure so the screen can say so instead of showing an empty list.
+  static Future<List<Map<String, dynamic>>> getTrybeEvents(
+    String trybeId, {
+    bool past = false,
+  }) async {
+    final res = await _client.get(
+        '/trybes/$trybeId/events${_query({'when': past ? 'past' : 'upcoming'})}');
+    if (res.statusCode >= 300) _ensureOk(res);
+    return _listOf(res, 'events');
+  }
+
+  /// Creates an event, or updates [eventId] when given. Passing a null [endsAt]
+  /// on an update removes the end time.
+  static Future<Map<String, dynamic>> saveTrybeEvent(
+    String trybeId, {
+    String? eventId,
+    required String title,
+    String? description,
+    String? location,
+    String? activityType,
+    required DateTime startsAt,
+    DateTime? endsAt,
+  }) async {
+    final body = <String, dynamic>{
+      'title': title,
+      'description': ?description,
+      'location': ?location,
+      'activityType': ?activityType,
+      'startsAt': startsAt.toUtc().toIso8601String(),
+      'endsAt': endsAt?.toUtc().toIso8601String(),
+    };
+    final res = eventId == null
+        ? await _client.post('/trybes/$trybeId/events', body: body)
+        : await _client.patch('/trybes/$trybeId/events/$eventId', body: body);
+    final data = _ensureOk(res);
+    return (data['event'] as Map<String, dynamic>?) ?? data;
+  }
+
+  static Future<void> deleteTrybeEvent(String trybeId, String eventId) async {
+    final res = await _client.delete('/trybes/$trybeId/events/$eventId');
+    if (res.statusCode >= 300) _ensureOk(res);
+  }
+
+  /// Returns `going` and the new `goingCount`.
+  static Future<Map<String, dynamic>> setEventRsvp(
+    String trybeId,
+    String eventId,
+    bool going,
+  ) async {
+    final path = '/trybes/$trybeId/events/$eventId/rsvp';
+    final res = going ? await _client.post(path) : await _client.delete(path);
+    return _ensureOk(res);
+  }
+
+  /// [reason] is SPAM, HARASSMENT, INAPPROPRIATE, MISINFORMATION or OTHER. The
+  /// post is also hidden for the reporter.
+  static Future<void> reportPost(
+    String postId, {
+    required String reason,
+    String? details,
+  }) async {
+    final res = await _client.post('/posts/$postId/report', body: {
+      'reason': reason,
+      'details': ?details,
+    });
+    _ensureOk(res);
+  }
+
+  /// Hides a post from every feed for this athlete only, or brings it back.
+  static Future<void> setPostHidden(String postId, bool hidden) async {
+    final path = '/posts/$postId/hide';
+    final res = hidden ? await _client.post(path) : await _client.delete(path);
+    _ensureOk(res);
   }
 
   static Future<List<Map<String, dynamic>>> getTrybePosts(
@@ -539,6 +749,28 @@ class ApiService {
     return _decodeMap(res)['session'] as Map<String, dynamic>?;
   }
 
+  /// Whether a Clique session is still worth recording against.
+  ///
+  /// True while it is upcoming or live, false once it has been completed,
+  /// cancelled or deleted, and null when the question could not be asked at
+  /// all. A caller must treat null as "leave it alone": dropping someone's
+  /// workout because their train went into a tunnel would be worse than
+  /// keeping a stale one.
+  static Future<bool?> cliqueStillRunning(String sessionId) async {
+    try {
+      final res = await _client.get('/cliques/$sessionId');
+      if (res.statusCode == 404 || res.statusCode == 410) return false;
+      if (res.statusCode >= 300) return null;
+      final session = _decodeMap(res)['session'];
+      if (session is! Map) return false;
+      final status = '${session['status'] ?? ''}'.toUpperCase();
+      return status == 'LIVE' || status == 'UPCOMING';
+    } catch (_) {
+      // Offline, or the server is unreachable: unknown, not gone.
+      return null;
+    }
+  }
+
   static Future<Map<String, dynamic>?> createClique(
       Map<String, dynamic> body) async {
     final res = await _client.post('/cliques', body: body);
@@ -564,6 +796,25 @@ class ApiService {
   }
 
   /// Sets the caller's lobby readiness for a clique session.
+  /// Ends the caller's own leg of a Clique and settles their leaderboard row.
+  /// Everyone finishes separately; the server closes the session once nobody
+  /// is still running.
+  static Future<bool> finishClique(
+    String sessionId, {
+    required double distance,
+    required int duration,
+    int calories = 0,
+    bool endSession = false,
+  }) async {
+    final res = await _client.post('/cliques/$sessionId/finish', body: {
+      'distance': distance,
+      'duration': duration,
+      'calories': calories,
+      'endSession': endSession,
+    });
+    return res.statusCode < 300;
+  }
+
   static Future<bool> setCliqueReady(String sessionId, bool isReady) async {
     final res = await _client
         .patch('/cliques/$sessionId/ready', body: {'isReady': isReady});
@@ -700,6 +951,21 @@ class ApiService {
         ? await _client.post('/users/$userId/follow')
         : await _client.delete('/users/$userId/follow');
     return res.statusCode < 300;
+  }
+
+  /// Blocks or unblocks someone. Blocking ends follows both ways and hides each
+  /// from the other; unblocking does not bring the follows back.
+  static Future<void> setBlocked(String userId, bool blocked) async {
+    final path = '/users/$userId/block';
+    final res = blocked ? await _client.post(path) : await _client.delete(path);
+    _ensureOk(res);
+  }
+
+  /// People this athlete has blocked. Throws so the screen can say it failed.
+  static Future<List<Map<String, dynamic>>> getBlockedUsers() async {
+    final res = await _client.get('/users/me/blocks');
+    if (res.statusCode >= 300) _ensureOk(res);
+    return _listOf(res, 'users');
   }
 
   static Future<Map<String, dynamic>?> uploadAvatar(File file) async {
