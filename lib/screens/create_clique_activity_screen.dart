@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'clique_live_activity_screen.dart';
 import '../services/api_service.dart';
 import '../services/session_service.dart';
+import '../services/units.dart';
 import '../widgets/user_avatar.dart';
 
 class CreateCliqueActivityScreen extends StatefulWidget {
@@ -55,7 +56,10 @@ class _CreateCliqueActivityScreenState
 
   // Steps are not measured per session, so a steps goal could never fill in.
   final List<String> _goalTypes = ['Distance', 'Duration', 'Calories'];
-  final List<String> _goalUnits = ['km', 'min', 'kcal'];
+
+  /// Distance is offered in whichever unit this athlete reads in; it is
+  /// converted to kilometres on the way to the server.
+  List<String> get _goalUnits => [Units.distanceUnit, 'min', 'kcal'];
 
   /// Athletes chosen to invite when the session is created.
   final List<Map<String, dynamic>> _selectedMembers = [];
@@ -90,8 +94,19 @@ class _CreateCliqueActivityScreenState
     setState(() => _isCreating = true);
 
     final goalType = _goalTypes[_selectedGoalType];
-    final goalValue = double.tryParse(_goalController.text) ?? 5.0;
     final goalUnit = _goalUnits[_selectedGoalType];
+
+    // A goal of nothing, or of letters, is a mistake worth saying out loud.
+    // Sending it would have the server refuse the whole session with a
+    // validation error nobody could act on.
+    final entered = double.tryParse(_goalController.text.trim().replaceAll(',', '.'));
+    if (entered == null || entered <= 0) {
+      setState(() => _isCreating = false);
+      HapticFeedback.vibrate();
+      _complain('Set a goal above zero, like 5 $goalUnit.');
+      return;
+    }
+    final goalValue = entered;
     final activityType =
         _activityTypes[_selectedActivityType]['label'] as String;
     final scheduledAt = _isScheduled
@@ -104,29 +119,51 @@ class _CreateCliqueActivityScreenState
           )
         : DateTime.now();
 
+    // Today's date with a time that has been and gone is the easy mistake to
+    // make here, and it would schedule an activity into the past.
+    if (_isScheduled && scheduledAt.isBefore(DateTime.now())) {
+      setState(() => _isCreating = false);
+      HapticFeedback.vibrate();
+      _complain('That time has already passed. Pick a later one.');
+      return;
+    }
+
     try {
       final session = await ApiService.createClique({
         'title': _previewName,
         'activityType': activityType,
         'scheduledAt': scheduledAt.toIso8601String(),
         // The API tracks distance targets in kilometres.
-        if (goalType == 'Distance') 'targetDistance': goalValue,
+        // Stored in kilometres whatever the athlete typed it in.
+        if (goalType == 'Distance') 'targetDistance': Units.toKm(goalValue),
         if (goalType == 'Duration') 'targetDuration': (goalValue * 60).round(),
         if (goalType == 'Calories') 'targetCalories': goalValue.round(),
       });
 
+      // One invite that will not send must not look like a session that was
+      // never created: it was, and the athlete is about to be standing in it.
       final sessionId = session?['id'] as String?;
+      var failedInvites = 0;
       if (sessionId != null) {
         for (final member in _selectedMembers) {
           final userId = member['id'] as String?;
-          if (userId != null) {
+          if (userId == null) continue;
+          try {
             await ApiService.inviteToClique(sessionId, userId);
+          } catch (e) {
+            failedInvites++;
+            debugPrint('Clique invite failed: $e');
           }
         }
       }
 
       if (!mounted) return;
       setState(() => _isCreating = false);
+      if (failedInvites > 0) {
+        _complain(failedInvites == 1
+            ? 'One invite did not send. Invite them again from the session.'
+            : '$failedInvites invites did not send. Try again from the session.');
+      }
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -161,6 +198,19 @@ class _CreateCliqueActivityScreenState
         ),
       );
     }
+  }
+
+  /// Says what went wrong, in the same place every time.
+  void _complain(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: const Color(0xFF1F1F22),
+        content: Text(
+          message,
+          style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+        ),
+      ),
+    );
   }
 
   String get _previewName =>

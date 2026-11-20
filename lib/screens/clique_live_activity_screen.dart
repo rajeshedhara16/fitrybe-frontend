@@ -152,6 +152,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   /// Whether the signed-in user has accepted their invite (is in the lobby).
   bool _hasJoined = false;
   bool _isTogglingReady = false;
+  bool _isJoining = false;
 
   // Leaderboard filter
   String _selectedMetricFilter = 'DISTANCE';
@@ -395,8 +396,9 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       } else if (targetDistance != null && targetDistance > 0) {
         _hasGoal = true;
         _goalType = 'Distance';
+        // Kept in kilometres, shown in whatever this athlete reads in.
         _goalValue = targetDistance;
-        _goalUnit = 'km';
+        _goalUnit = Units.distanceUnit;
       } else {
         // Nothing was set, so nothing is shown and nothing stops the workout.
         _hasGoal = false;
@@ -430,6 +432,33 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     // session that is over, never starts again.
     if (isLive && _hasJoined && !_live.isActive && !_iFinished && !_isCompleted) {
       _startLive();
+    }
+  }
+
+  /// Accepts the invitation from inside the session itself. Without this the
+  /// only way in was the notification, which leaves anyone who opened the
+  /// activity from the list unable to take part.
+  Future<void> _joinSession() async {
+    final id = widget.sessionId;
+    if (id == null || _isJoining) return;
+    HapticFeedback.mediumImpact();
+    setState(() => _isJoining = true);
+    try {
+      await ApiService.joinClique(id);
+      await _loadSession();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: _cardBg,
+          content: Text(
+            e is ApiException ? e.message : 'Could not join this activity.',
+            style: GoogleFonts.hankenGrotesk(color: Colors.white70),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isJoining = false);
     }
   }
 
@@ -961,13 +990,22 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     final double progress = _goalProgress();
     final int percent = (progress * 100).toInt();
 
-    String currentStr = currentVal.toStringAsFixed(2);
-    String targetStr = goalVal.toStringAsFixed(2);
+    // Distance is held in kilometres and shown in the athlete's own unit.
+    final bool isDistanceGoal = _goalType == 'Distance';
+    final double shownCurrent =
+        isDistanceGoal ? Units.fromKm(currentVal) : currentVal;
+    final double shownTarget = isDistanceGoal ? Units.fromKm(goalVal) : goalVal;
+    // Read live, so switching between kilometres and miles in settings is
+    // reflected here without reloading the session.
+    final String goalUnit = isDistanceGoal ? Units.distanceUnit : _goalUnit;
+
+    String currentStr = shownCurrent.toStringAsFixed(2);
+    String targetStr = shownTarget.toStringAsFixed(2);
     if (_goalType == 'Duration' ||
         _goalType == 'Calories' ||
         _goalType == 'Steps') {
-      currentStr = currentVal.toInt().toString();
-      targetStr = goalVal.toInt().toString();
+      currentStr = shownCurrent.toInt().toString();
+      targetStr = shownTarget.toInt().toString();
     }
 
     return ClipRRect(
@@ -1039,7 +1077,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                       border: Border.all(color: _accent.withValues(alpha: 0.3)),
                     ),
                     child: Text(
-                      'TARGET: $targetStr $_goalUnit',
+                      'TARGET: $targetStr $goalUnit',
                       style: GoogleFonts.hankenGrotesk(
                         color: _accent,
                         fontSize: 10.5,
@@ -1070,7 +1108,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                           ),
                         ),
                         TextSpan(
-                          text: '/ $targetStr $_goalUnit',
+                          text: '/ $targetStr $goalUnit',
                           style: GoogleFonts.hankenGrotesk(
                             color: Colors.white38,
                             fontSize: 14,
@@ -1126,7 +1164,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
               Text(
                 progress >= 1.0
                     ? 'Goal reached'
-                    : '${((1.0 - progress) * goalVal).toStringAsFixed(1)} $_goalUnit remaining',
+                    : '${((1.0 - progress) * shownTarget).toStringAsFixed(1)} $goalUnit remaining',
                 style: GoogleFonts.hankenGrotesk(
                   color: Colors.white54,
                   fontSize: 12,
@@ -1541,6 +1579,37 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
               return Column(
                 children: [
+                  if (!_hasJoined)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: _isJoining ? null : _joinSession,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _accent,
+                          foregroundColor: Colors.white,
+                          disabledBackgroundColor: const Color(0xFF2A2A2D),
+                          elevation: 0,
+                          shape: const StadiumBorder(),
+                        ),
+                        child: _isJoining
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2.2, color: Colors.white),
+                              )
+                            : Text(
+                                'JOIN ACTIVITY',
+                                style: GoogleFonts.hankenGrotesk(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                      ),
+                    )
+                  else
                   SizedBox(
                     width: double.infinity,
                     height: 56,
