@@ -37,6 +37,9 @@ class _CliqueTabState extends State<CliqueTab>
   List<Map<String, dynamic>> _liveActivities = [];
   List<Map<String, dynamic>> _upcomingActivities = [];
   List<Map<String, dynamic>> _completedActivities = [];
+
+  /// Sessions whose room this tab has already joined.
+  final Set<String> _watchedSessions = {};
   bool _isActivitiesLoading = true;
   String? _activitiesError;
 
@@ -60,6 +63,20 @@ class _CliqueTabState extends State<CliqueTab>
     socket.connect();
     socket.on('clique:lobby_updated', _onRemoteCliqueChange);
     socket.on('clique:started', _onRemoteCliqueChange);
+    // Without this the list went on saying LIVE after a session had ended.
+    socket.on('clique:status_updated', _onRemoteCliqueChange);
+  }
+
+  /// Rooms are per session, so this tab has to be in each one to hear that a
+  /// session went live or finished while the list is on screen.
+  void _watchSessions(List<Map<String, dynamic>> sessions) {
+    final socket = SocketService();
+    for (final session in sessions) {
+      final id = session['id'];
+      if (id is String && id.isNotEmpty && _watchedSessions.add(id)) {
+        socket.joinRoom('clique:join', id);
+      }
+    }
   }
 
   void _onRemoteCliqueChange(dynamic _) {
@@ -92,6 +109,8 @@ class _CliqueTabState extends State<CliqueTab>
             .toList();
         _isActivitiesLoading = false;
       });
+      // Hear about these sessions going live or ending while the list is up.
+      _watchSessions(sessions);
     } catch (e) {
       debugPrint('CliqueTab load error: $e');
       if (!mounted) return;

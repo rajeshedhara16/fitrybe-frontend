@@ -98,6 +98,11 @@ class LiveSession {
   factory LiveSession() => _instance;
 
   static const _key = 'fitrybe_live_session';
+  static const _finishedKey = 'fitrybe_finished_sessions';
+
+  /// How many finished Cliques are remembered. Only enough to cover the ones
+  /// an athlete might still have on screen.
+  static const finishedMemory = 20;
 
   /// Telemetry is sent to the squad on this cadence while a Clique runs.
   static const telemetryInterval = Duration(seconds: 3);
@@ -140,6 +145,12 @@ class LiveSession {
   String? _lastFinishedSessionId;
   DateTime? _lastFinishedAt;
 
+  /// Cliques this athlete has already finished, kept on disk. A session screen
+  /// reopened after a failed save still knows they are done, rather than
+  /// offering to record the workout all over again.
+  final List<String> _finishedSessions = [];
+  bool _finishedLoaded = false;
+
   bool _isViewOpen = false;
 
   /// Set by the screen showing this session, so the return banner knows to
@@ -149,6 +160,24 @@ class LiveSession {
     if (_isViewOpen == value) return;
     _isViewOpen = value;
     _publish();
+  }
+
+  /// Whether this athlete has already finished that Clique.
+  bool hasFinished(String? sessionId) =>
+      sessionId != null && _finishedSessions.contains(sessionId);
+
+  /// Reads the finished list off disk. Safe to call repeatedly.
+  Future<void> loadFinished() async {
+    if (_finishedLoaded) return;
+    _finishedLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _finishedSessions
+        ..clear()
+        ..addAll(prefs.getStringList(_finishedKey) ?? const []);
+    } catch (e) {
+      debugPrint('LiveSession finished-list read error: $e');
+    }
   }
 
   LiveSessionState get state => notifier.value;
@@ -276,6 +305,7 @@ class LiveSession {
 
     _lastFinishedSessionId = _sessionId;
     _lastFinishedAt = clock();
+    await _rememberFinished(_sessionId);
     await _stopEverything();
     return summary;
   }
@@ -315,6 +345,7 @@ class LiveSession {
   /// holding every point on disk is not worth the writes.
   Future<void> restore() async {
     if (isActive) return;
+    await loadFinished();
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_key);
@@ -441,6 +472,25 @@ class LiveSession {
       goalType: _goalType,
       goalProgress: goalProgress,
     );
+  }
+
+  /// Keeps a finished session on disk, newest last, trimmed to the few that
+  /// could still be on screen.
+  Future<void> _rememberFinished(String? sessionId) async {
+    if (sessionId == null) return;
+    await loadFinished();
+    _finishedSessions
+      ..remove(sessionId)
+      ..add(sessionId);
+    while (_finishedSessions.length > finishedMemory) {
+      _finishedSessions.removeAt(0);
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_finishedKey, _finishedSessions);
+    } catch (e) {
+      debugPrint('LiveSession finished-list save error: $e');
+    }
   }
 
   Future<void> _save() async {

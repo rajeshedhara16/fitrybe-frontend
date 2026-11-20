@@ -318,4 +318,62 @@ void main() {
       expect(session.isActive, isTrue);
     });
   });
+
+  group('remembering what was finished', () {
+    test('a finished Clique is still known after the app restarts', () async {
+      final session = LiveSession();
+      await session.start(
+        mode: LiveMode.clique,
+        sessionId: 'session-remembered',
+        activityType: 'Running',
+      );
+      tick(const Duration(minutes: 5));
+      await session.finish();
+
+      expect(session.hasFinished('session-remembered'), isTrue);
+
+      // What a fresh launch would read back off disk.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList('fitrybe_finished_sessions'),
+          contains('session-remembered'));
+    });
+
+    test('a session never finished is not claimed as done', () async {
+      expect(LiveSession().hasFinished('never-run'), isFalse);
+      expect(LiveSession().hasFinished(null), isFalse);
+    });
+  });
+
+  group('sessions without a goal', () {
+    test('never finish themselves', () async {
+      final session = LiveSession();
+      await session.start(
+        mode: LiveMode.clique,
+        sessionId: 'no-goal',
+        activityType: 'Running',
+      );
+      tick(const Duration(hours: 3));
+
+      expect(session.goalProgress, isNull);
+      expect(session.goalReached, isFalse);
+      expect(session.isActive, isTrue, reason: 'nothing to reach, so it runs on');
+    });
+
+    test('a goal cleared by the server stops counting towards one', () async {
+      final session = LiveSession();
+      await session.start(
+        mode: LiveMode.clique,
+        sessionId: 'cleared-goal',
+        activityType: 'Running',
+        goalType: 'Duration',
+        goalTarget: 5,
+      );
+      tick(const Duration(minutes: 2));
+      expect(session.goalProgress, 0.4);
+
+      session.updateGoal(type: null, target: null);
+      expect(session.goalProgress, isNull);
+      expect(session.goalReached, isFalse);
+    });
+  });
 }

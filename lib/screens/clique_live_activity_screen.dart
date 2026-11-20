@@ -78,6 +78,10 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   /// the screen never depends on the server answering to stop showing a lobby.
   bool _locallyFinished = false;
 
+  /// Whether this session actually has a goal. Without it the screen's own
+  /// defaults would invent a five kilometre target and stop the workout there.
+  bool _hasGoal = false;
+
   /// What their leg measured, held for the ended view until the server's own
   /// figures come back.
   LiveSessionSummary? _mySummary;
@@ -103,6 +107,7 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   /// it happens locally, and from the server's roster afterwards.
   bool get _iFinished =>
       _locallyFinished ||
+      _live.hasFinished(widget.sessionId) ||
       '${_myRow['status'] ?? ''}'.toUpperCase() == 'COMPLETED';
 
   /// Nothing more will be recorded here: this athlete is done, or the whole
@@ -181,6 +186,11 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
     _joinTelemetryRoom();
     _live.notifier.addListener(_onLiveChanged);
     _live.isViewOpen = true;
+    // Knowing which sessions are already finished decides whether this screen
+    // offers to start one.
+    _live.loadFinished().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   /// Redraws as the running session reports distance, pace and the clock.
@@ -199,9 +209,16 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       sessionId: widget.sessionId,
       activityType: _selectedActivityType,
       title: _selectedActivityName,
-      goalType: _goalType,
-      goalTarget: _goalValue,
+      // Only a goal the session really has. Otherwise the defaults below would
+      // quietly end the workout at five kilometres.
+      goalType: _hasGoal ? _goalType : null,
+      goalTarget: _hasGoal ? _goalValue : null,
     );
+    // The session details can land after the start; this keeps the running
+    // session's copy of the goal in step either way.
+    if (_hasGoal) {
+      _live.updateGoal(type: _goalType, target: _goalValue);
+    }
     if (mounted) setState(_refreshMyRow);
   }
 
@@ -366,21 +383,27 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
       final targetDuration = (session['targetDuration'] as num?)?.toInt();
       final targetCalories = (session['targetCalories'] as num?)?.toInt();
       if (targetDuration != null && targetDuration > 0) {
+        _hasGoal = true;
         _goalType = 'Duration';
         _goalValue = targetDuration / 60;
         _goalUnit = 'min';
       } else if (targetCalories != null && targetCalories > 0) {
+        _hasGoal = true;
         _goalType = 'Calories';
         _goalValue = targetCalories.toDouble();
         _goalUnit = 'kcal';
       } else if (targetDistance != null && targetDistance > 0) {
+        _hasGoal = true;
         _goalType = 'Distance';
         _goalValue = targetDistance;
         _goalUnit = 'km';
+      } else {
+        // Nothing was set, so nothing is shown and nothing stops the workout.
+        _hasGoal = false;
       }
       // A session already running was started before its details arrived, so
       // the goal is handed over now rather than being lost.
-      if (_isRecording) {
+      if (_hasGoal && _live.sessionId == widget.sessionId) {
         _live.updateGoal(type: _goalType, target: _goalValue);
       }
 
@@ -437,16 +460,15 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
   void dispose() {
     _live.notifier.removeListener(_onLiveChanged);
     _live.isViewOpen = false;
+    // Only this screen's own handlers: the Clique tab listens to the same
+    // events and must keep hearing them.
     SocketService()
-      ..off('clique:telemetry_update')
-      ..off('clique:status_updated')
-      ..off('clique:lobby_updated');
-    // Stay in the room while still running, so this athlete's telemetry keeps
-    // reaching the squad from whatever screen they wander off to.
-    if (widget.sessionId != null && !_isRecording) {
-      SocketService()
-          .leaveRoom('clique:join', 'clique:leave', widget.sessionId!);
-    }
+      ..off('clique:telemetry_update', _onTelemetry)
+      ..off('clique:status_updated', _onStatusUpdated)
+      ..off('clique:lobby_updated', _onLobbyUpdated);
+    // The room is left joined. Telemetry keeps reaching the squad while this
+    // athlete is still running, and the Clique tab needs the same room to hear
+    // that a session went live or finished.
     _pulseController.dispose();
     super.dispose();
   }
@@ -743,8 +765,10 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Goal Completion Card
-                          _buildGoalCompletionCard(),
-                          const SizedBox(height: 20),
+                          if (_hasGoal) ...[
+                            _buildGoalCompletionCard(),
+                            const SizedBox(height: 20),
+                          ],
 
                           if (_isRecording || _isEnded) ...[
                             // Leaderboard Title & Filter Row
@@ -902,9 +926,16 @@ class _CliqueLiveActivityScreenState extends State<CliqueLiveActivityScreen>
 
   /// Ends the workout the moment the goal is met. The athlete set a target;
   /// carrying on counting past it is what made the session feel broken.
+  /// Whether the target has been met, judged by the same figures the card on
+  /// screen shows. The running session keeps its own copy of the goal for the
+  /// banner, but it is only a second opinion here: when the two disagree, the
+  /// numbers the athlete can see win.
+  bool get _goalMet =>
+      (_hasGoal && _goalProgress() >= 1) || _live.goalReached;
+
   void _checkGoalReached() {
     if (_goalCelebrated || !_isRecording) return;
-    if (!_live.goalReached) return;
+    if (!_goalMet) return;
     _goalCelebrated = true;
     HapticFeedback.heavyImpact();
     if (!mounted) return;

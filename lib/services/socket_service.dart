@@ -145,8 +145,21 @@ class SocketService {
     _socket?.on(event, callback);
   }
 
-  void off(String event) {
-    _handlers.remove(event);
-    _socket?.off(event);
+  /// Removes one handler, or every handler for the event when none is given.
+  ///
+  /// Several screens listen to the same event at once — the Clique tab and an
+  /// open session both watch the lobby. Removing the lot when one of them
+  /// closed left the other permanently deaf.
+  void off(String event, [void Function(dynamic)? callback]) {
+    if (callback == null) {
+      _handlers.remove(event);
+      _socket?.off(event);
+      return;
+    }
+    final handlers = _handlers[event];
+    if (handlers == null) return;
+    handlers.remove(callback);
+    _socket?.off(event, callback);
+    if (handlers.isEmpty) _handlers.remove(event);
   }
 }
